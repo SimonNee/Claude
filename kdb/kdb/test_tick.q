@@ -28,18 +28,49 @@ if[`size in cols trade; passed+:1; -1 "PASS: Has size column"];
 if[not `size in cols trade; failed+:1; -1 "FAIL: Has size column"];
 
 / Test 3: Schema types are correct
-schema:meta trade;
-if[`p = exec t from schema where c=`time; passed+:1; -1 "PASS: time is timestamp type"];
-if[not `p = exec t from schema where c=`time; failed+:1; -1 "FAIL: time is timestamp type"];
+/ Helper function to safely check column type with precondition validation
+checkColType:{[tbl;colName;expectedType]
+  / Protected evaluation: get type from meta
+  / Use a lambda that unpacks the args tuple
+  / Note: use 'col' not 'c' to avoid collision with meta table's 'c' column
+  typeResult: @[{[args] t:args 0; col:args 1; exec t from meta[t] where c=col}; (tbl;colName); {(`error;x)}];
 
-if[`s = exec t from schema where c=`sym; passed+:1; -1 "PASS: sym is symbol type"];
-if[not `s = exec t from schema where c=`sym; failed+:1; -1 "FAIL: sym is symbol type"];
+  / Precondition 1: Check if we got an error
+  if[`error ~ first typeResult; :(`error; "Error accessing meta: ", last typeResult)];
 
-if[`f = exec t from schema where c=`price; passed+:1; -1 "PASS: price is float type"];
-if[not `f = exec t from schema where c=`price; failed+:1; -1 "FAIL: price is float type"];
+  / Precondition 2: Check we got exactly one result
+  if[1 <> count typeResult; :(`error; "Expected 1 type result, got ", string count typeResult)];
 
-if[`j = exec t from schema where c=`size; passed+:1; -1 "PASS: size is long type"];
-if[not `j = exec t from schema where c=`size; failed+:1; -1 "FAIL: size is long type"];
+  / Extract actual type
+  actualType: first typeResult;
+
+  / Compare with expected
+  :$[expectedType ~ actualType; (`pass; actualType); (`fail; actualType)]
+ };
+
+/ Test time column type
+result: checkColType[`trade; `time; "p"];
+if[`pass ~ first result; passed+:1; -1 "PASS: time is timestamp type"];
+if[`fail ~ first result; failed+:1; -1 "FAIL: time is timestamp type, expected 'p', got '", string last result, "'"];
+if[`error ~ first result; failed+:1; -1 "FAIL: time type check - ", last result];
+
+/ Test sym column type
+result: checkColType[`trade; `sym; "s"];
+if[`pass ~ first result; passed+:1; -1 "PASS: sym is symbol type"];
+if[`fail ~ first result; failed+:1; -1 "FAIL: sym is symbol type, expected 's', got '", string last result, "'"];
+if[`error ~ first result; failed+:1; -1 "FAIL: sym type check - ", last result];
+
+/ Test price column type
+result: checkColType[`trade; `price; "f"];
+if[`pass ~ first result; passed+:1; -1 "PASS: price is float type"];
+if[`fail ~ first result; failed+:1; -1 "FAIL: price is float type, expected 'f', got '", string last result, "'"];
+if[`error ~ first result; failed+:1; -1 "FAIL: price type check - ", last result];
+
+/ Test size column type
+result: checkColType[`trade; `size; "j"];
+if[`pass ~ first result; passed+:1; -1 "PASS: size is long type"];
+if[`fail ~ first result; failed+:1; -1 "FAIL: size is long type, expected 'j', got '", string last result, "'"];
+if[`error ~ first result; failed+:1; -1 "FAIL: size type check - ", last result];
 
 / Test 4: Initial data exists
 if[0 < count trade; passed+:1; -1 "PASS: Trade table has data"];
