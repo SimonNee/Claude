@@ -217,13 +217,13 @@ This is **fundamental q syntax**, not an edge case. A human who has written even
 | `tick.q` | Trade table schema definition | - |
 | `gen.q` | `genTrades[n]` data generator | - |
 | `test_utils.q` | Reusable test utilities | - |
-| `test_tick_v2.q` | Table schema validation | 14 |
+| `test_tick.q` | Table schema validation | 14 |
 | `test_gen.q` | Generator validation + stress test | 52 |
 
 **Running tests:**
 ```bash
-q test_tick_v2.q   # Table tests
-q test_gen.q       # Generator tests (includes 10M stress test)
+q test_tick.q   # Table tests
+q test_gen.q    # Generator tests (includes 10M stress test)
 ```
 
 **Next:** Iteration 3 — Time/Symbol Queries (`getTrades[sym;startTime;endTime]`)
