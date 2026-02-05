@@ -1,5 +1,9 @@
 # Q Test Code Improvements
 
+> **CRITICAL Q SYNTAX NOTE**: Function application in q uses `f[x]` or `f x` (with space), NEVER `f(x)`.
+> Parentheses are for grouping only. Writing `all(x)` is a type error — it parses as the noun `all` followed by `(x)`.
+> Correct: `all x`, `all[x]`, `count[tbl]`, `sum vals`
+
 ## Critique of Original Test Code
 
 ### What Was Wrong
@@ -48,7 +52,7 @@ checkColType:{[tbl;colName;expectedType]
 **Idiomatic Q:**
 ```q
 / Check all types at once
-expectedTypes:`time`sym`price`size!"psf j"
+expectedTypes:`time`sym`price`size!"psfj"
 actualTypes:exec c!t from meta trade
 expectedTypes~actualTypes
 ```
@@ -87,7 +91,7 @@ expectedTypes~actualTypes
 | Column types | `typeDict~exec c!t from meta tbl` | test.md: comparison |
 | Non-empty | `0<count tbl` | test.md: comparison |
 | No nulls | `all not null tbl cols` | flag.md: all |
-| Ascending order | `all(<=)prior tbl col` | test.md: ascending |
+| Ascending order | `(asc tbl col)~tbl col` | test.md: ascending |
 | Unique values | `tbl~distinct tbl` | test.md: unique |
 
 ### Category 2: Financial Trade Table Tests
@@ -99,7 +103,7 @@ expectedTypes~actualTypes
 | Prices positive | `all 0<tbl\`price` | Prices cannot be zero or negative |
 | Sizes positive | `all 0<tbl\`size` | Trade sizes must be positive |
 | Valid symbols | `all not null tbl\`sym` | Every trade needs a symbol |
-| Time ascending | `all(<=)prior tbl\`time` | Trades sorted by time |
+| Time ascending | `(asc tbl\`time)~tbl\`time` | Trades sorted by time |
 | No future times | `all tbl[\`time]<=.z.p` | No timestamps in future |
 | No infinities | `all tbl[\`price]within(-0w;0w)` | Finite prices only |
 | No duplicates | `(count tbl)=count distinct tbl\`time\`sym` | Unique trades |
@@ -122,8 +126,7 @@ all x in y  / x is subset of y
 
 **Ascending order:**
 ```q
-all(>=)prior x  / each item >= previous
-x~asc x         / alternative
+(asc x)~x       / x equals its sorted form
 ```
 
 **Unique items:**
@@ -309,7 +312,7 @@ The improved code follows patterns from:
 
 ### Q-Specific Wisdom
 
-1. **Let q do the work**: `all(<=)prior x` is simpler than a loop
+1. **Let q do the work**: `(asc x)~x` is simpler than a loop
 2. **Tables are data structures**: Use them for test results
 3. **Dictionaries are powerful**: Type checking via dictionary comparison
 4. **Composition over complexity**: Build complex checks from simple primitives
