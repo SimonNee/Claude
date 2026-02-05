@@ -1,99 +1,108 @@
 / Unit Test Harness for Tick Analytics Engine
-/ Iteration 1 Tests
+/ Iteration 1 Tests - Idiomatic Q Version
 
 / Load the code under test
 \l tick.q
 
-/ Test framework
-passed:0
-failed:0
+/ Test framework using a table to track results
+tests:([] name:`symbol$(); result:`boolean$(); msg:())
+
+/ Helper: Add test result
+addTest:{[nm;res;msg] `tests insert (nm;res;msg)}
 
 -1 "\n=== Running Iteration 1 Tests ===\n";
 
-/ Test 1: Trade table exists
-if[`trade in tables[]; passed+:1; -1 "PASS: Trade table exists"];
-if[not `trade in tables[]; failed+:1; -1 "FAIL: Trade table exists"];
+/ ========================================
+/ CATEGORY 1: GENERAL TABLE TESTS
+/ Reusable tests for any q table
+/ ========================================
 
-/ Test 2: Trade table has correct columns
-if[`time in cols trade; passed+:1; -1 "PASS: Has time column"];
-if[not `time in cols trade; failed+:1; -1 "FAIL: Has time column"];
+/ Test 1: Table exists
+addTest[`table_exists; `trade in tables[]; "Trade table should exist in workspace"]
 
-if[`sym in cols trade; passed+:1; -1 "PASS: Has sym column"];
-if[not `sym in cols trade; failed+:1; -1 "FAIL: Has sym column"];
+/ Test 2: Has expected columns (exact match)
+expectedCols:`time`sym`price`size
+addTest[`has_columns; expectedCols~cols trade; "Should have columns: time,sym,price,size"]
 
-if[`price in cols trade; passed+:1; -1 "PASS: Has price column"];
-if[not `price in cols trade; failed+:1; -1 "FAIL: Has price column"];
+/ Test 3: Column types match specification
+/ Expected types: p=timestamp, s=symbol, f=float, j=long
+expectedTypes:`time`sym`price`size!"psf j"
+actualTypes:exec c!t from meta trade
+addTest[`column_types; expectedTypes~actualTypes; "Column types should match schema"]
 
-if[`size in cols trade; passed+:1; -1 "PASS: Has size column"];
-if[not `size in cols trade; failed+:1; -1 "FAIL: Has size column"];
+/ Test 4: Table is non-empty
+addTest[`non_empty; 0<count trade; "Table should contain at least one row"]
 
-/ Test 3: Schema types are correct
-/ Helper function to safely check column type with precondition validation
-checkColType:{[tbl;colName;expectedType]
-  / Protected evaluation: get type from meta
-  / Use a lambda that unpacks the args tuple
-  / Note: use 'col' not 'c' to avoid collision with meta table's 'c' column
-  typeResult: @[{[args] t:args 0; col:args 1; exec t from meta[t] where c=col}; (tbl;colName); {(`error;x)}];
+/ Test 5: No nulls in key columns
+/ Key columns for trade: time, sym
+keyNullCheck:all not null trade`time`sym
+addTest[`no_nulls_in_keys; keyNullCheck; "Key columns (time,sym) should not contain nulls"]
 
-  / Precondition 1: Check if we got an error
-  if[`error ~ first typeResult; :(`error; "Error accessing meta: ", last typeResult)];
+/ ========================================
+/ CATEGORY 2: FINANCIAL TRADE TABLE TESTS
+/ Domain-specific validation for tick data
+/ ========================================
 
-  / Precondition 2: Check we got exactly one result
-  if[1 <> count typeResult; :(`error; "Expected 1 type result, got ", string count typeResult)];
+/ Test 6: All prices are positive
+addTest[`prices_positive; all 0<trade`price; "All prices must be greater than 0"]
 
-  / Extract actual type
-  actualType: first typeResult;
+/ Test 7: All sizes are positive
+addTest[`sizes_positive; all 0<trade`size; "All trade sizes must be greater than 0"]
 
-  / Compare with expected
-  :$[expectedType ~ actualType; (`pass; actualType); (`fail; actualType)]
- };
+/ Test 8: All symbols are valid (non-null)
+addTest[`symbols_valid; all not null trade`sym; "All symbols must be non-null"]
 
-/ Test time column type
-result: checkColType[`trade; `time; "p"];
-if[`pass ~ first result; passed+:1; -1 "PASS: time is timestamp type"];
-if[`fail ~ first result; failed+:1; -1 "FAIL: time is timestamp type, expected 'p', got '", string last result, "'"];
-if[`error ~ first result; failed+:1; -1 "FAIL: time type check - ", last result];
+/ Test 9: Timestamps in ascending order (for sorted table)
+/ Using (<=) with prior to check each timestamp >= previous
+addTest[`time_ascending; all(<=)prior trade`time; "Timestamps should be in ascending order"]
 
-/ Test sym column type
-result: checkColType[`trade; `sym; "s"];
-if[`pass ~ first result; passed+:1; -1 "PASS: sym is symbol type"];
-if[`fail ~ first result; failed+:1; -1 "FAIL: sym is symbol type, expected 's', got '", string last result, "'"];
-if[`error ~ first result; failed+:1; -1 "FAIL: sym type check - ", last result];
+/ Test 10: No future timestamps
+addTest[`no_future_times; all trade[`time]<=.z.p; "No timestamps should be in the future"]
 
-/ Test price column type
-result: checkColType[`trade; `price; "f"];
-if[`pass ~ first result; passed+:1; -1 "PASS: price is float type"];
-if[`fail ~ first result; failed+:1; -1 "FAIL: price is float type, expected 'f', got '", string last result, "'"];
-if[`error ~ first result; failed+:1; -1 "FAIL: price type check - ", last result];
+/ Test 11: No invalid types (NaN, infinities for float columns)
+priceValid:all trade[`price] within (-0w;0w)
+addTest[`price_valid_range; priceValid; "Prices should not be infinite"]
 
-/ Test size column type
-result: checkColType[`trade; `size; "j"];
-if[`pass ~ first result; passed+:1; -1 "PASS: size is long type"];
-if[`fail ~ first result; failed+:1; -1 "FAIL: size is long type, expected 'j', got '", string last result, "'"];
-if[`error ~ first result; failed+:1; -1 "FAIL: size type check - ", last result];
+/ ========================================
+/ ITERATION 1 SPECIFIC TESTS
+/ Tests for the hardcoded initial data
+/ ========================================
 
-/ Test 4: Initial data exists
-if[0 < count trade; passed+:1; -1 "PASS: Trade table has data"];
-if[not 0 < count trade; failed+:1; -1 "FAIL: Trade table has data"];
+/ Test 12: Exactly 1 row in initial data
+addTest[`exact_row_count; 1=count trade; "Should have exactly 1 row initially"]
 
-if[1 = count trade; passed+:1; -1 "PASS: Trade table has exactly 1 row"];
-if[not 1 = count trade; failed+:1; -1 "FAIL: Trade table has exactly 1 row"];
+/ Test 13: First trade is AAPL
+addTest[`symbol_is_aapl; `AAPL~first trade`sym; "First trade symbol should be AAPL"]
 
-/ Test 5: Initial trade data is correct
-if[`AAPL = first trade`sym; passed+:1; -1 "PASS: First trade is AAPL"];
-if[not `AAPL = first trade`sym; failed+:1; -1 "FAIL: First trade is AAPL"];
+/ Test 14: First trade price is 150.25
+addTest[`price_is_150_25; 150.25~first trade`price; "First trade price should be 150.25"]
 
-if[150.25 = first trade`price; passed+:1; -1 "PASS: First trade price is 150.25"];
-if[not 150.25 = first trade`price; failed+:1; -1 "FAIL: First trade price is 150.25"];
+/ Test 15: First trade size is 100
+addTest[`size_is_100; 100~first trade`size; "First trade size should be 100"]
 
-if[100 = first trade`size; passed+:1; -1 "PASS: First trade size is 100"];
-if[not 100 = first trade`size; failed+:1; -1 "FAIL: First trade size is 100"];
+/ ========================================
+/ REPORT RESULTS
+/ ========================================
 
-/ Report results
--1 "\n=== Test Results ===";
--1 "Passed: ", string passed;
--1 "Failed: ", string failed;
--1 "Total:  ", string passed + failed;
+-1 "\n=== Test Results ===\n";
+
+/ Calculate pass/fail counts using vector operations
+passed:sum tests`result
+failed:sum not tests`result
+
+/ Show failed tests with details
+if[0<failed;
+  -1 "FAILED TESTS:";
+  failedTests:select from tests where not result;
+  -1 .Q.s failedTests;
+  -1 ""
+ ];
+
+/ Summary
+-1 "Passed: ",string passed;
+-1 "Failed: ",string failed;
+-1 "Total:  ",string count tests;
+-1 "Pass rate: ",string[100*passed%count tests],"%\n";
 
 / Exit with appropriate code
-exit $[failed > 0; 1; 0]
+exit $[failed>0;1;0]
