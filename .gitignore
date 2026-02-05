@@ -101,3 +101,5 @@ datasets/
 .env.local
 *.secret
 credentials.json
+kdb/phrases/
+kdb/reference/
