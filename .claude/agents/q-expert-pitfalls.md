@@ -327,6 +327,126 @@ til[10] within (0;9)     / boundaries inclusive
 
 ---
 
+## Variable Shadowing in Select Statements
+
+### The Error
+
+Parameter names that shadow column names cause ambiguity in `select` statements.
+
+```q
+/ WRONG - parameter 'sym' shadows column 'sym'
+getTradesBySym:{[sym]
+  select from trade where sym in sym  / which 'sym' is which?
+ }
+
+/ CORRECT - rename parameter to avoid shadowing
+getTradesBySym:{[syms]
+  select from trade where sym in syms  / clear: column 'sym' in parameter 'syms'
+ }
+```
+
+**Real Incident (Iteration 3)**: Original implementation used parameter name `sym`, which shadowed the `sym` column in the trade table.
+
+**Rule**:
+- Never use parameter names that match column names in tables you're querying
+- Prefer plural forms for list parameters: `syms`, `times`, `prices`
+- Use descriptive prefixes: `reqSym`, `targetSym`, `filterSym`
+
+---
+
+## Global Assignment Operator (`::`)
+
+### Multiple Uses of `::`
+
+The `::` operator has several meanings in q:
+
+1. **Global assignment in functions**:
+   ```q
+   f:{[] x::42}  / assigns 42 to global x
+   ```
+
+2. **View definition**:
+   ```q
+   viewName::select from table where condition  / creates a view
+   ```
+
+3. **Generic null**:
+   ```q
+   ::  / the generic null (type -101h)
+   ```
+
+### The Table Type Bug
+
+```q
+/ WRONG - breaks table type
+trade::0#trade  / trade becomes type 0h (mixed list), not 98h (table)
+
+/ CORRECT - use delete to clear table
+delete from `trade  / preserves table type (98h)
+```
+
+**Real Incident (Iteration 3)**: Used `trade::0#trade` to clear the table in tests. This broke the table type - `trade` became `0h` (mixed list) instead of `98h` (table), causing subsequent inserts to fail.
+
+**Type Check**:
+```q
+q)trade:([]time:`timestamp$(); sym:`symbol$(); price:`float$(); size:`long$())
+q)type trade
+98h  / table
+
+q)trade::0#trade
+q)type trade
+0h   / mixed list - BROKEN!
+
+q)delete from `trade
+q)type trade
+98h  / still a table - CORRECT
+```
+
+**Rule**:
+- To clear a table: `delete from \`tableName`
+- Never use `table::0#table` for clearing - it breaks table type
+- `0#table` works fine for local variables, but `::` assignment corrupts it
+
+---
+
+## Timestamp Arithmetic and Type Preservation
+
+### The Error
+
+Arithmetic operations on timestamps can produce unexpected types.
+
+```q
+/ WRONG - produces float, not timespan
+maxTime:2024.01.15D10:00:00.000000000
+minTime:2024.01.15D09:00:00.000000000
+halfDiff:(maxTime-minTime)%2  / this is a FLOAT!
+midTime:minTime+halfDiff      / type error
+
+/ CORRECT - explicit type conversion
+halfDiff:0D00:00:00.000000001*(`long$(maxTime-minTime))div 2
+midTime:minTime+halfDiff
+```
+
+**Real Incident (Iteration 3)**: When computing time range midpoint, `(maxTime-minTime)%2` returned a float, not a timespan.
+
+**Type Chart**:
+
+| Operation | Result Type |
+|-----------|-------------|
+| `timestamp - timestamp` | timespan |
+| `timespan % int` | **float** (not timespan!) |
+| `timespan div int` | long |
+| `timestamp + timespan` | timestamp |
+
+**Solution Pattern**:
+```q
+/ Convert to nanoseconds (long), divide, convert back to timespan
+halfDiff:0D00:00:00.000000001*(`long$(maxTime-minTime))div 2
+midTime:minTime+halfDiff
+```
+
+---
+
 ## Summary of Most Common Errors
 
 1. **Function calls**: Using `f(x)` instead of `f x` or `f[x]` ← THIS IS #1
@@ -335,6 +455,9 @@ til[10] within (0;9)     / boundaries inclusive
 4. **Prior edge case**: Using `prior` for sorted checks (first element fails)
 5. **Circular tests**: Testing with same formula used in implementation
 6. **Multi-column indexing**: Not handling table results from `tbl col_list`
+7. **Variable shadowing**: Parameter names matching column names in selects
+8. **Table clearing**: Using `::` assignment instead of `delete from`
+9. **Timestamp division**: Division produces float, not timespan
 
 ---
 
@@ -366,6 +489,18 @@ all x within (lo;hi) ← all values in range
 / NULL CHECK
 null x           ← CORRECT
 x=0N             ← WRONG (0N=0N is false!)
+
+/ VARIABLE SHADOWING
+select from t where sym in sym   ← WRONG (param shadows column)
+select from t where sym in syms  ← CORRECT (different names)
+
+/ TABLE CLEARING
+delete from `trade               ← CORRECT (preserves type 98h)
+trade::0#trade                   ← WRONG (becomes type 0h)
+
+/ TIMESTAMP ARITHMETIC
+(maxT-minT)%2                    ← WRONG (returns float)
+0D00:00:00.000000001*(`long$(maxT-minT))div 2  ← CORRECT (timespan)
 ```
 
 ---
