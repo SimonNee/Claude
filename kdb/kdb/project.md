@@ -24,12 +24,13 @@ Build a self-contained KDB+/q system for time-series tick data analytics to asse
 - **Validates**: Functional queries, temporal operations, q select syntax
 - **Status**: Completed 2026-02-07 — query.q with 3 functions, test_query.q with 49 tests passing
 
-### Iteration 4: VWAP ← NEXT TARGET
+### Iteration 4: VWAP ✓ PASSED
 - **Objective**: Calculate volume-weighted average price
 - **Deliverable**: `vwap[trades]` function, demonstrate on sample data
 - **Validates**: Aggregation operations, weighted calculations
+- **Status**: Completed 2026-02-07 — vwap.q with 2 functions using wavg, test_vwap.q with 26 tests passing (0 bugs!)
 
-### Iteration 5: OHLC Bars
+### Iteration 5: OHLC Bars ← NEXT TARGET
 - **Objective**: Bar aggregation (1min, 5min configurable)
 - **Deliverable**: `ohlc[trades; barSize]` function producing candlestick data
 - **Validates**: Temporal bucketing, multi-column aggregations, xbar
@@ -267,6 +268,57 @@ This is **fundamental q syntax**, not an edge case. A human who has written even
 
 ---
 
+### Iteration 4: VWAP (2026-02-07)
+
+**What was implemented:**
+- `vwap.q` with two functions:
+  - `vwap[trades]` — overall VWAP for a table
+  - `vwapBySym[trades]` — VWAP grouped by symbol
+- `test_vwap.q` with comprehensive test suite (26 tests)
+
+**Result:**
+- `vwap.q`: **0 bugs** — worked first time
+- `test_vwap.q`: **0 bugs** — worked first time
+- 26 tests passing including 1M row stress test
+
+**Key implementation decision:**
+
+Used the idiomatic `wavg` operator instead of manual calculation:
+```q
+/ Idiomatic (used)
+vwap:{[trades] trades[`size] wavg trades`price}
+
+/ Manual (avoided)
+vwap:{[trades] (sum trades[`price]*trades`size)%sum trades`size}
+```
+
+The `wavg` operator is:
+- Built-in primitive (optimized)
+- Clear intent
+- Standard financial idiom in q
+- Found in all KX reference implementations
+
+**Why zero bugs this iteration:**
+
+1. **Simpler code**: VWAP is essentially a one-liner using `wavg`
+2. **Established patterns**: Following patterns from previous iterations
+3. **Pitfalls reviewed**: Parameter named `trades` to avoid shadowing
+4. **Independent tests**: Property-based tests, not formula reproduction
+
+**Test categories:**
+- Known value tests (hand-calculated)
+- Property-based tests (VWAP within price range, order invariant)
+- Edge cases (empty, single trade, zero volume)
+- Independent validation (compare with exec)
+- Integration tests (with query functions)
+- Stress test (1M rows)
+
+**Stress test results (1M rows):**
+- vwap calculation: 2ms
+- vwapBySym calculation: 11ms
+
+---
+
 ## Current File Summary
 
 | File | Purpose | Tests |
@@ -274,16 +326,19 @@ This is **fundamental q syntax**, not an edge case. A human who has written even
 | `tick.q` | Trade table schema definition | - |
 | `gen.q` | `genTrades[n]` data generator | - |
 | `query.q` | Time/symbol query functions | - |
+| `vwap.q` | VWAP calculation functions | - |
 | `test_utils.q` | Reusable test utilities | - |
 | `test_tick.q` | Table schema validation | 14 |
 | `test_gen.q` | Generator validation + stress test | 52 |
 | `test_query.q` | Query function tests + stress test | 49 |
+| `test_vwap.q` | VWAP function tests + stress test | 26 |
 
 **Running tests:**
 ```bash
 q test_tick.q   # Table tests
 q test_gen.q    # Generator tests (includes 10M stress test)
 q test_query.q  # Query function tests (includes 100k stress test)
+q test_vwap.q   # VWAP function tests (includes 1M stress test)
 ```
 
-**Next:** Iteration 4 — VWAP (`vwap[trades]`)
+**Next:** Iteration 5 — OHLC Bars (`ohlc[trades; barSize]`)
