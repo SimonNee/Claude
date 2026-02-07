@@ -1,0 +1,110 @@
+TODO-001: Apply Column Attributes for Query Performance
+=======================================================
+
+Status: Planned
+Priority: Medium
+Created: 2026-02-07
+Iteration: Post-Iteration 3
+
+Summary
+-------
+Apply KDB+ column attributes (s#, g#) to the trade table to optimize query performance.
+
+
+Analysis
+--------
+Current table schema (tick.q):
+
+    trade:([]
+      time:`timestamp$();
+      sym:`symbol$();
+      price:`float$();
+      size:`long$()
+      )
+
+Query patterns (query.q):
+- where sym in syms    -> symbol filtering (membership test)
+- where time within (startTime;endTime) -> time range filtering
+
+
+Recommendations
+---------------
+Column  Attribute       Rationale                                       Performance Impact
+------  ---------       ---------                                       ------------------
+time    s# (sorted)     Data is sequential; within gets O(log n)        10-1000x faster range queries
+                        binary search
+sym     g# (grouped)    Creates symbol->rows index; in becomes          10-100x faster membership tests
+                        O(1) lookup
+price   None            Not used in predicates                          -
+size    None            Not used in predicates                          -
+
+
+Implementation Notes
+--------------------
+1. Apply attributes post-insert, not in schema
+   - Attributes on empty columns are fragile
+   - First insert may remove them
+
+2. Application pattern:
+
+    `trade insert genTrades[1000]
+    update `s#time from `trade
+    update `g#sym from `trade
+
+3. Verification:
+
+    meta trade                                        / check 'a' column for attributes
+    (asc exec time from trade)~exec time from trade   / verify sorted invariant
+
+4. Considerations:
+   - s#time is safe because genTrades produces sorted timestamps (.z.p+sums n?100)
+   - g#sym should be applied after 100+ rows accumulate
+   - Attributes must be reapplied after "delete from" operations in tests
+   - Grouped is better than sorted for sym because symbols are randomly distributed
+
+
+Trade-offs: Now vs Later
+------------------------
+Apply NOW (Early Stage):
+  Pros:
+  - Easier to test attribute behavior with small data
+  - Establish patterns early in development
+  - Catch attribute violations during testing (e.g., unsorted inserts)
+
+  Cons:
+  - Schema becomes more complex
+  - Insert errors if data doesn't maintain invariants
+  - May need to remove/reapply during development iterations
+
+Apply LATER (After Data Accumulates):
+  Pros:
+  - More flexibility during development
+  - No insert failures during testing/iteration
+  - Can measure actual performance benefit
+
+  Cons:
+  - Miss optimization opportunities during development
+  - Harder to retrofit if schema assumptions change
+
+
+Tick-Specific Recommendations
+-----------------------------
+For real-time tick data systems:
+
+1. Intraday Tables (accumulating data):
+   - Apply s# to time immediately (fundamental invariant)
+   - Apply g# to sym after initial batch
+   - Verify attributes preserved after each insert batch
+
+2. Historical Tables (partitioned on disk):
+   - time gets s# automatically within partitions
+   - sym benefits from p# (parted attribute) across partitions
+   - Consider column enumeration for symbols (separate symbol table)
+
+
+Acceptance Criteria
+-------------------
+[ ] Add helper function to apply attributes after data generation
+[ ] Update test utilities to preserve/restore attributes
+[ ] Add attribute verification to test suite
+[ ] Document attribute patterns in project.md
