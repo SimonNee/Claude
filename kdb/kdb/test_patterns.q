@@ -146,9 +146,9 @@ looksNormal:{[vals]
   iqr:q3-q1;
 
   / Check if most values within 1.5*IQR of quartiles
-  lower:q1-1.5*iqr;
-  upper:q3+1.5*iqr;
-  outliers:sum not v within(lower;upper);
+  lowerBound:q1-1.5*iqr;
+  upperBound:q3+1.5*iqr;
+  outliers:sum not v within(lowerBound;upperBound);
 
   / Expect < 5% outliers for normal distribution
   (outliers%count v)<0.05
