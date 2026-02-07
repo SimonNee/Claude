@@ -18,12 +18,13 @@ Build a self-contained KDB+/q system for time-series tick data analytics to asse
 - **Validates**: Q functions, random data generation, temporal sequences
 - **Status**: Completed 2026-02-05 — gen.q worked first time, test_gen.q needed 5 fixes (52 tests passing, includes 10M row stress test)
 
-### Iteration 3: Time/Symbol Queries ← NEXT TARGET
+### Iteration 3: Time/Symbol Queries ✓ PASSED
 - **Objective**: Helper functions to slice data by time range and symbol
 - **Deliverable**: `getTrades[sym; startTime; endTime]` style functions
 - **Validates**: Functional queries, temporal operations, q select syntax
+- **Status**: Completed 2026-02-07 — query.q with 3 functions, test_query.q with 49 tests passing
 
-### Iteration 4: VWAP
+### Iteration 4: VWAP ← NEXT TARGET
 - **Objective**: Calculate volume-weighted average price
 - **Deliverable**: `vwap[trades]` function, demonstrate on sample data
 - **Validates**: Aggregation operations, weighted calculations
@@ -210,20 +211,79 @@ This is **fundamental q syntax**, not an edge case. A human who has written even
 
 ---
 
+### Iteration 3: Time/Symbol Queries (2026-02-07)
+
+**What was implemented:**
+- `query.q` with three query functions:
+  - `getTradesBySym[syms]` — filter by symbol(s), all times
+  - `getTradesByTime[startTime;endTime]` — filter by time range, all symbols
+  - `getTrades[syms;startTime;endTime]` — combined filter
+- `test_query.q` with comprehensive test suite (49 tests)
+
+**Result:**
+- `query.q`: **2 bugs** fixed (parameter naming conflict)
+- `test_query.q`: **3 bugs** fixed (table reassignment issues)
+- 49 tests passing including 100k row stress test
+
+**Bugs encountered:**
+
+1. **Parameter shadows column name**: `sym in sym` in where clause
+   - Original: `getTradesBySym:{[sym] select from trade where sym in sym}`
+   - Parameter `sym` shadows the column `sym` in the where clause
+   - Fix: rename parameter to `syms`
+   - **Pattern-matching without semantic analysis** — copied variable name from usage pattern
+
+2. **Same bug in `getTrades`**: `where sym in sym` with parameter named `sym`
+   - Exact same error repeated in the combined function
+   - Shows Claude doesn't learn from fixes within same session
+
+3. **Global table reassignment breaks table type**: `trade::0#trade`
+   - Using `::` to reassign a table produces a mixed list (0h) not a table (98h)
+   - `select from trade` then fails with type error
+   - Fix: use `delete from \`trade` to clear and `\`trade insert` to repopulate
+   - **Incorrect idiom** — `0#tbl` works for local use but `tbl::0#tbl` breaks the global
+
+4. **Timestamp arithmetic produces wrong type**: `(maxTime-minTime)%2`
+   - Division of timespan by 2 produces float, not timespan
+   - Cannot add float to timestamp
+   - Fix: convert to long nanoseconds, divide, convert back to timespan
+   - **Type coercion ignorance** — q's strict typing requires explicit conversions
+
+5. **Same timestamp issue in midpoint calculation**
+   - Required: `minTime+0D00:00:00.000000001*(\`long$(maxTime-minTime))div 2`
+   - Shows q's timespan arithmetic is less forgiving than expected
+
+**Key insights:**
+
+1. **Name shadowing is a recurring bug class**: Claude reuses variable names without considering scope conflicts. The `sym in sym` bug is identical in structure to bugs in other languages but q's terse style makes it harder to spot.
+
+2. **Table mutation semantics are non-obvious**: The difference between `trade::0#trade` (breaks table type) and `delete from \`trade` (preserves table type) is subtle but critical. This is advanced q knowledge.
+
+3. **Timestamp arithmetic requires explicit conversions**: Unlike Python's timedelta, q timespans don't implicitly coerce with division. This is a common trap.
+
+**Stress test results (100k rows):**
+- Query time: 1ms for 3 queries
+- All correctness checks pass
+
+---
+
 ## Current File Summary
 
 | File | Purpose | Tests |
 |------|---------|-------|
 | `tick.q` | Trade table schema definition | - |
 | `gen.q` | `genTrades[n]` data generator | - |
+| `query.q` | Time/symbol query functions | - |
 | `test_utils.q` | Reusable test utilities | - |
 | `test_tick.q` | Table schema validation | 14 |
 | `test_gen.q` | Generator validation + stress test | 52 |
+| `test_query.q` | Query function tests + stress test | 49 |
 
 **Running tests:**
 ```bash
 q test_tick.q   # Table tests
 q test_gen.q    # Generator tests (includes 10M stress test)
+q test_query.q  # Query function tests (includes 100k stress test)
 ```
 
-**Next:** Iteration 3 — Time/Symbol Queries (`getTrades[sym;startTime;endTime]`)
+**Next:** Iteration 4 — VWAP (`vwap[trades]`)
