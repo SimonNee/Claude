@@ -4,34 +4,36 @@
 
 **Branch:** `feature/kdb-tick-analytics`
 
-**Files Created:**
-- `kdb/project.md` - Project roadmap and detailed assessment results
-- `kdb/tick.q` - Basic tick table schema (successful)
-- `kdb/test_tick.q` - Unit test harness (failed due to syntax errors)
+**Iteration:** 5 of 6 complete (OHLC Bars)
 
-**Git Status:**
-- ✅ Assessment results committed (605e131)
-- status.md created after commit to document state
+**Total tests:** 224 passing (14 + 52 + 49 + 26 + 83)
 
-## Assessment Outcome
+**Files:**
+- `tick.q` — Trade table schema
+- `gen.q` — `genTrades[n]` synthetic data generator
+- `query.q` — Time/symbol query functions
+- `vwap.q` — VWAP calculation (wavg)
+- `ohlc.q` — OHLC bar aggregation (xbar)
+- `test_utils.q` — Reusable test framework
+- `test_tick.q` — 14 tests
+- `test_gen.q` — 52 tests (10M stress)
+- `test_query.q` — 49 tests (100k stress)
+- `test_vwap.q` — 26 tests (1M stress)
+- `test_ohlc.q` — 83 tests (1M stress)
+- `project.md` — Roadmap and detailed assessment results
+- `status.md` — This file
 
-Claude **cannot autonomously produce KDB+/q code** due to:
-- Limited training corpus for this niche language
-- Function definition syntax errors ("nyi" errors)
-- Meta table access failures
-- Pattern-matching behavior vs. true comprehension
+## Bug Summary by Iteration
 
-See `kdb/project.md` for detailed error analysis and conclusions.
-
-## Completed Steps
-
-1. ✅ **Assessment results committed** (605e131)
-   - Documented KDB+/q code generation limitations
-   - Committed kdb/project.md, tick.q, and test_tick.q files
+| Iteration | Source | Test | Bugs |
+|-----------|--------|------|------|
+| 1. Schema | 0 | 3 | test_utils.q: dict length, multi-col index, prior edge case |
+| 2. Generator | 0 | 5 | all(x) syntax, list-vs-scalar, meta types, timestamp precision, circular test |
+| 3. Queries | 2 | 3 | param shadows column (x2), table reassignment, timestamp arithmetic (x2) |
+| 4. VWAP | 0 | 0 | Zero bugs |
+| 5. OHLC | 0 | 1 | bare `/` block comment in test file |
 
 ## Next Steps
 
-1. **Push branch to GitHub** for remote backup
-2. **Optional: Merge to main or keep branch for future retry**
-   - Branch documents a useful negative result
-   - Can revisit in a few months if Claude's training data updates
+1. **Iteration 6**: TWAP (Time-Weighted Average Price)
+2. See `project.md` for full roadmap and assessment history

@@ -30,10 +30,11 @@ Build a self-contained KDB+/q system for time-series tick data analytics to asse
 - **Validates**: Aggregation operations, weighted calculations
 - **Status**: Completed 2026-02-07 — vwap.q with 2 functions using wavg, test_vwap.q with 26 tests passing (0 bugs!)
 
-### Iteration 5: OHLC Bars ← NEXT TARGET
+### Iteration 5: OHLC Bars ✓ PASSED
 - **Objective**: Bar aggregation (1min, 5min configurable)
-- **Deliverable**: `ohlc[trades; barSize]` function producing candlestick data
+- **Deliverable**: `ohlc[trades; barMins]` function producing candlestick data
 - **Validates**: Temporal bucketing, multi-column aggregations, xbar
+- **Status**: Completed 2026-02-11 — ohlc.q with 2 functions, test_ohlc.q with 83 tests passing (1 bug in test code: bare `/` block comment)
 
 ### Iteration 6: TWAP
 - **Objective**: Time-weighted average price calculation
@@ -319,6 +320,57 @@ The `wavg` operator is:
 
 ---
 
+### Iteration 5: OHLC Bars (2026-02-11)
+
+**What was implemented:**
+- `ohlc.q` with two functions:
+  - `ohlc[trades;barMins]` — OHLC bars grouped by symbol and time bucket
+  - `ohlcAll[trades;barMins]` — OHLC bars across all symbols
+- `test_ohlc.q` with comprehensive test suite (83 tests)
+
+**Result:**
+- `ohlc.q`: **0 bugs** — worked first time
+- `test_ohlc.q`: **1 bug** fixed (bare `/` block comment)
+- 83 tests passing including 1M row stress tests
+
+**Key implementation decisions:**
+
+Used integer minutes for bar width (`barMins`) with `xbar` on `time.minute` — the canonical KX pattern:
+```q
+ohlc:{[trades;barMins]
+  select open:first price, high:max price, low:min price, close:last price,
+         volume:sum size, cnt:count i
+  by sym, bar:barMins xbar time.minute from trades}
+```
+
+Design choices:
+- `barMins` parameter (not `size`) — avoids shadowing the `size` column
+- `trades` parameter (not `trade`) — avoids shadowing the global table
+- `cnt` column (not `count`) — avoids shadowing the q keyword
+- `count i` — idiomatic row count in grouped select
+- Returns keyed table (type 99h) with minute-type bar column
+
+**Bug encountered in test code:**
+
+1. **Bare `/` starts block comment**: A line containing only `/` with no trailing text enters q's multi-line comment mode (everything until a `\` line is commented out). The test file had 5 blank comment lines like `/` that silently commented out all subsequent code, causing q to hang waiting for input.
+   - Fix: ensure all comment lines have text or space after `/`
+   - **This is a q-specific pitfall** — in most languages, `//` or `#` on a blank line is harmless
+
+**Test categories (83 tests):**
+- Known value tests (35): Hand-calculated OHLC on controlled data with minute-level timestamps
+- Schema/structure tests (13): Keyed table type, key/value columns, column types
+- Edge case tests (15): Empty table, single trade, same price, single symbol, bar width effects
+- Property-based tests (8): low<=high, price ordering, volume/count conservation, global range
+- Integration tests (7): genTrades, getTradesBySym, ohlcAll-vs-ohlc consistency, VWAP-within-bar
+- Stress tests (5): 1M rows performance and invariants
+
+**Stress test results (1M rows):**
+- ohlc calculation: 37ms
+- ohlcAll calculation: 26ms
+- All property invariants hold at scale
+
+---
+
 ## Current File Summary
 
 | File | Purpose | Tests |
@@ -327,11 +379,13 @@ The `wavg` operator is:
 | `gen.q` | `genTrades[n]` data generator | - |
 | `query.q` | Time/symbol query functions | - |
 | `vwap.q` | VWAP calculation functions | - |
+| `ohlc.q` | OHLC bar aggregation functions | - |
 | `test_utils.q` | Reusable test utilities | - |
 | `test_tick.q` | Table schema validation | 14 |
 | `test_gen.q` | Generator validation + stress test | 52 |
 | `test_query.q` | Query function tests + stress test | 49 |
 | `test_vwap.q` | VWAP function tests + stress test | 26 |
+| `test_ohlc.q` | OHLC bar tests + stress test | 83 |
 
 **Running tests:**
 ```bash
@@ -339,6 +393,7 @@ q test_tick.q   # Table tests
 q test_gen.q    # Generator tests (includes 10M stress test)
 q test_query.q  # Query function tests (includes 100k stress test)
 q test_vwap.q   # VWAP function tests (includes 1M stress test)
+q test_ohlc.q   # OHLC bar tests (includes 1M stress test)
 ```
 
-**Next:** Iteration 5 — OHLC Bars (`ohlc[trades; barSize]`)
+**Next:** Iteration 6 — TWAP (`twap[trades; interval]`)
