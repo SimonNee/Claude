@@ -36,10 +36,11 @@ Build a self-contained KDB+/q system for time-series tick data analytics to asse
 - **Validates**: Temporal bucketing, multi-column aggregations, xbar
 - **Status**: Completed 2026-02-11 — ohlc.q with 2 functions, test_ohlc.q with 83 tests passing (1 bug in test code: bare `/` block comment)
 
-### Iteration 6: TWAP
+### Iteration 6: TWAP ✓ PASSED
 - **Objective**: Time-weighted average price calculation
-- **Deliverable**: `twap[trades; interval]` function
-- **Validates**: More complex temporal logic
+- **Deliverable**: `twap[trades]` and `twapBySym[trades]` functions
+- **Validates**: More complex temporal logic (deltas, duration-weighting, wavg)
+- **Status**: Completed 2026-02-11 — twap.q with 2 functions, test_twap.q with 30 tests passing (1 bug in twap.q: bare `/` block comment lines)
 
 ## Design Principles
 
@@ -371,6 +372,65 @@ Design choices:
 
 ---
 
+### Iteration 6: TWAP (2026-02-11)
+
+**What was implemented:**
+- `twap.q` with two functions:
+  - `twap[trades]` — overall TWAP for a table
+  - `twapBySym[trades]` — TWAP grouped by symbol
+- `test_twap.q` with comprehensive test suite (30 tests)
+
+**Result:**
+- `twap.q`: **1 bug** fixed (bare `/` block comment lines)
+- `test_twap.q`: **0 bugs** — worked first time
+- 30 tests passing including 1M row stress test
+
+**Key implementation decisions:**
+
+Used `deltas` for inter-trade durations and `wavg` for weighted averaging:
+```q
+twap:{[trades] (`long$1_ deltas trades`time) wavg -1_ trades`price}
+```
+
+Design choices:
+- `deltas` computes consecutive time differences; `1_` drops the first (non-diff) element
+- `-1_` drops the last price (no subsequent trade to define its duration)
+- `` `long$ `` cast converts timespan durations to nanoseconds for `wavg`
+- No `interval` parameter — TWAP's complexity is temporal weighting, not bucketing (already demonstrated by OHLC)
+- `twapBySym` uses q's `by sym` grouping for automatic per-group application
+
+**Bug encountered in source code:**
+
+1. **Bare `/` starts block comment (again)**: Six lines in `twap.q` contained only `/` with no trailing text, entering q's multi-line comment mode and silently preventing function definitions from loading.
+   - Fix: changed bare `/` to `/ .` (slash-space-dot)
+   - **Same pitfall as Iteration 5** — despite being documented, the AgentQ agent reproduced it
+   - Shows that q-specific formatting rules are not reliably internalized even with explicit pitfall documentation
+
+**Test categories (30 tests):**
+- Known value tests (8): Hand-calculated TWAP with controlled timestamps and time gaps
+- Schema/structure tests (3): Keyed table type, twap column, float type
+- Edge case tests (6): Empty table, single trade, two trades, same timestamp, same price, large gap
+- Property-based tests (6): TWAP within price range, per-symbol range, uniform price, bySym-vs-filtered, equal spacing, TWAP/VWAP comparison
+- Integration tests (4): genTrades, getTradesBySym, getTrades, TWAP+VWAP range
+- Stress tests (3): 1M row performance and invariants
+
+**Stress test results (1M rows):**
+- twap calculation: 10ms
+- twapBySym calculation: 10ms
+
+---
+
+## Project Complete
+
+All 6 iterations completed successfully. 254 total tests passing across 6 test suites.
+
+**Final bug summary:**
+- Source code bugs: 5 total (3 in query.q, 1 bare `/` in twap.q, 0 in vwap.q, gen.q, ohlc.q, tick.q)
+- Test code bugs: 12 total (3 in test_utils.q, 5 in test_gen.q, 3 in test_query.q, 1 in test_ohlc.q, 0 in test_vwap.q, test_twap.q)
+- Zero-bug iterations: VWAP (Iteration 4) — both source and tests worked first time
+
+---
+
 ## Current File Summary
 
 | File | Purpose | Tests |
@@ -380,20 +440,23 @@ Design choices:
 | `query.q` | Time/symbol query functions | - |
 | `vwap.q` | VWAP calculation functions | - |
 | `ohlc.q` | OHLC bar aggregation functions | - |
+| `twap.q` | TWAP calculation functions | - |
 | `test_utils.q` | Reusable test utilities | - |
 | `test_tick.q` | Table schema validation | 14 |
 | `test_gen.q` | Generator validation + stress test | 52 |
 | `test_query.q` | Query function tests + stress test | 49 |
 | `test_vwap.q` | VWAP function tests + stress test | 26 |
 | `test_ohlc.q` | OHLC bar tests + stress test | 83 |
+| `test_twap.q` | TWAP function tests + stress test | 30 |
 
 **Running tests:**
 ```bash
-q test_tick.q   # Table tests
-q test_gen.q    # Generator tests (includes 10M stress test)
-q test_query.q  # Query function tests (includes 100k stress test)
-q test_vwap.q   # VWAP function tests (includes 1M stress test)
-q test_ohlc.q   # OHLC bar tests (includes 1M stress test)
+q test_tick.q   # Table tests (14)
+q test_gen.q    # Generator tests (52, includes 10M stress test)
+q test_query.q  # Query function tests (49, includes 100k stress test)
+q test_vwap.q   # VWAP function tests (26, includes 1M stress test)
+q test_ohlc.q   # OHLC bar tests (83, includes 1M stress test)
+q test_twap.q   # TWAP function tests (30, includes 1M stress test)
 ```
 
-**Next:** Iteration 6 — TWAP (`twap[trades; interval]`)
+**Total: 254 tests across 6 suites — Project complete.**

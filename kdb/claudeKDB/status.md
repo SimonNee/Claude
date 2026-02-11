@@ -4,9 +4,9 @@
 
 **Branch:** `feature/kdb-tick-analytics`
 
-**Iteration:** 5 of 6 complete (OHLC Bars)
+**Iteration:** 6 of 6 complete (TWAP) — PROJECT COMPLETE
 
-**Total tests:** 224 passing (14 + 52 + 49 + 26 + 83)
+**Total tests:** 254 passing (14 + 52 + 49 + 26 + 83 + 30)
 
 **Files:**
 - `tick.q` — Trade table schema
@@ -14,12 +14,14 @@
 - `query.q` — Time/symbol query functions
 - `vwap.q` — VWAP calculation (wavg)
 - `ohlc.q` — OHLC bar aggregation (xbar)
+- `twap.q` — TWAP calculation (deltas/wavg)
 - `test_utils.q` — Reusable test framework
 - `test_tick.q` — 14 tests
 - `test_gen.q` — 52 tests (10M stress)
 - `test_query.q` — 49 tests (100k stress)
 - `test_vwap.q` — 26 tests (1M stress)
 - `test_ohlc.q` — 83 tests (1M stress)
+- `test_twap.q` — 30 tests (1M stress)
 - `project.md` — Roadmap and detailed assessment results
 - `status.md` — This file
 
@@ -32,8 +34,8 @@
 | 3. Queries | 2 | 3 | param shadows column (x2), table reassignment, timestamp arithmetic (x2) |
 | 4. VWAP | 0 | 0 | Zero bugs |
 | 5. OHLC | 0 | 1 | bare `/` block comment in test file |
+| 6. TWAP | 1 | 0 | bare `/` block comment in source file |
 
-## Next Steps
+## Summary
 
-1. **Iteration 6**: TWAP (Time-Weighted Average Price)
-2. See `project.md` for full roadmap and assessment history
+All 6 iterations complete. See `project.md` for full roadmap and assessment history.
