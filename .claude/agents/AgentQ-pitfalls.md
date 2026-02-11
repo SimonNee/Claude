@@ -447,6 +447,47 @@ midTime:minTime+halfDiff
 
 ---
 
+## Reserved Keywords as Variable Names
+
+### The Error
+
+q has reserved keywords that cannot be used as variable names. Using them silently produces wrong results or cryptic errors.
+
+```q
+/ WRONG - lower and upper are q keywords
+lower:q1-1.5*iqr
+upper:q3+1.5*iqr
+outliers:sum not v within(lower;upper)   / unexpected behavior
+
+/ CORRECT - use descriptive non-keyword names
+lowerBound:q1-1.5*iqr
+upperBound:q3+1.5*iqr
+outliers:sum not v within(lowerBound;upperBound)
+```
+
+**Real Incident (Iteration 4 post-fix)**: Used `lower` and `upper` as variable names in `looksNormal` function in test patterns. These are q keywords — `lower` lowercases strings, `upper` uppercases strings.
+
+**Common q keywords to avoid as variable names**:
+- `lower`, `upper` — case conversion
+- `like` — pattern matching
+- `in` — membership
+- `within` — range check
+- `except` — set difference
+- `inter` — set intersection
+- `union` — set union
+- `distinct` — unique values
+- `count` — length
+- `first`, `last` — element access
+- `key`, `value` — dictionary access
+- `type` — type check
+- `string` — conversion
+- `null` — null check
+- `sum`, `avg`, `min`, `max` — aggregations
+
+**Rule**: Never use q keywords as variable names. Use descriptive alternatives: `lowerBound`, `upperLimit`, `maxPrice`, `symList`, etc.
+
+---
+
 ## Summary of Most Common Errors
 
 1. **Function calls**: Using `f(x)` instead of `f x` or `f[x]` ← THIS IS #1
@@ -458,6 +499,7 @@ midTime:minTime+halfDiff
 7. **Variable shadowing**: Parameter names matching column names in selects
 8. **Table clearing**: Using `::` assignment instead of `delete from`
 9. **Timestamp division**: Division produces float, not timespan
+10. **Keywords as variables**: Using `lower`, `upper`, etc. as variable names
 
 ---
 
@@ -494,6 +536,10 @@ x=0N             ← WRONG (0N=0N is false!)
 select from t where sym in sym   ← WRONG (param shadows column)
 select from t where sym in syms  ← CORRECT (different names)
 
+/ KEYWORDS AS VARIABLES
+lower:x-1                        ← WRONG (lower is a keyword)
+lowerBound:x-1                   ← CORRECT (descriptive name)
+
 / TABLE CLEARING
 delete from `trade               ← CORRECT (preserves type 98h)
 trade::0#trade                   ← WRONG (becomes type 0h)
@@ -510,8 +556,9 @@ trade::0#trade                   ← WRONG (becomes type 0h)
 1. **Consult the phrasebook** for the relevant section (arith, find, test, etc.)
 2. **Check this pitfalls document** if using patterns from other languages
 3. **Remember**: No `f(x)`! Use `f x` or `f[x]`
-4. **Test edge cases**: empty, single element, boundaries
-5. **Validate independently**: don't test with implementation formula
+4. **Check variable names** against the keywords list — no `lower`, `upper`, `type`, `count`, etc.
+5. **Test edge cases**: empty, single element, boundaries
+6. **Validate independently**: don't test with implementation formula
 
 ---
 

@@ -97,6 +97,7 @@ The official KX Systems kdb repository containing clients, documentation, and ex
    - List vs scalar extractions
    - Use of `prior` for sorted checks
    - Circular test logic
+   - Keywords used as variable names (`lower`, `upper`, `count`, `type`, etc.)
 7. **Explain your choices**: Document why specific patterns were used
 
 ## Q Coding Principles
@@ -120,6 +121,149 @@ The official KX Systems kdb repository containing clients, documentation, and ex
 - Not extracting scalars from single-element lists
 - Using `prior` for sorted checks (edge case with first element)
 - Testing with the same formula used in implementation (circular)
+- Using q keywords as variable names (`lower`, `upper`, `type`, `count`, `first`, `last`, etc.)
+
+## Idiomatic Test Patterns Reference
+
+Use these validated patterns when writing tests and validation code. These are proven correct from prior iterations.
+
+### Comparison Patterns
+```q
+/ Do ranges match? (same distinct values regardless of order/duplicates)
+rangesMatch:{[x;y] (~)over('[asc;distinct])each(x;y)}
+
+/ Are x and y permutations of each other?
+arePermutations:{[x;y] (asc x)~asc y}
+```
+
+### Sequence Validation
+```q
+/ Are items in ascending order?
+isAscending:{[x] all(>=)prior x}
+/ Alternative (preferred — no prior edge case): {x~asc x}
+
+/ Are items unique?
+isUnique:{[x] x~distinct x}
+
+/ Is x a permutation vector? (contains exactly 0 to n-1)
+isPermutation:{[x] x~rank x}
+```
+
+### Numerical Tests
+```q
+/ Are items integral (no fractional part)?
+isIntegral:{[x] x=floor x}
+
+/ Are items even?
+isEven:{[x] not x mod 2}
+
+/ Are items in interval [low,high)?
+inInterval:{[x;low;high] (</')x<\:low,high}
+```
+
+### Flag/Boolean Operations
+```q
+/ First 1 in boolean vector
+firstOne:{[x] x?1}
+
+/ Last 1 in boolean vector
+lastOne:{[x] last where x}
+
+/ Lengths of groups of 1s
+groupLengths:{[x] deltas sums[x]where 1_(<)prior x,0}
+
+/ First 1 in each group of 1s
+firstInGroup:{[x] 1_(>)prior 0,x}
+
+/ Last 1 in each group of 1s
+lastInGroup:{[x] 1_(<)prior x,0}
+```
+
+### Table Validation
+```q
+/ Check if table schema matches expected
+/ Returns: (missingCols; extraCols; wrongTypes)
+schemaCheck:{[tbl;expectedSchema]
+  actual:meta tbl;
+  expected:expectedSchema;
+  actualCols:exec c from actual;
+  expectedCols:key expected;
+  missing:expectedCols except actualCols;
+  extra:actualCols except expectedCols;
+  common:actualCols inter expectedCols;
+  actualTypes:exec c!t from actual where c in common;
+  expectedTypes:expected common;
+  wrongTypes:where not expectedTypes~'actualTypes;
+  :(missing;extra;wrongTypes)
+ }
+
+/ Check referential integrity between tables
+checkForeignKey:{[childTbl;childCol;parentTbl;parentCol]
+  childVals:distinct childTbl childCol;
+  parentVals:parentTbl parentCol;
+  all childVals in parentVals
+ }
+```
+
+### Temporal Validation
+```q
+/ Check if timestamps have no gaps larger than threshold
+noLargeGaps:{[times;maxGap]
+  gaps:deltas times;
+  all 1_gaps<=maxGap
+ }
+
+/ Check if timestamps are within business hours
+inBusinessHours:{[times;openTime;closeTime]
+  timeOnly:`time$times;
+  all timeOnly within(openTime;closeTime)
+ }
+```
+
+### Statistical Validation
+```q
+/ Check if values are normally distributed (simple IQR test)
+looksNormal:{[vals]
+  v:vals where not null vals;
+  q1:v iasc[v]floor .25*count v;
+  q3:v iasc[v]floor .75*count v;
+  iqr:q3-q1;
+  lowerBound:q1-1.5*iqr;
+  upperBound:q3+1.5*iqr;
+  outliers:sum not v within(lowerBound;upperBound);
+  (outliers%count v)<0.05
+ }
+
+/ Check for suspicious patterns (e.g., all prices ending in .00)
+hasVariedDecimals:{[prices]
+  decimals:prices-floor prices;
+  (count distinct decimals)>0.1*count prices
+ }
+```
+
+### Property-Based Testing
+```q
+/ Idempotence: applying function twice gives same result as once
+testIdempotence:{[f;data] (f data)~f f data}
+
+/ Commutativity: f[x;y] = f[y;x]
+testCommutative:{[f;x;y] (f[x;y])~f[y;x]}
+
+/ Associativity: f[f[x;y];z] = f[x;f[y;z]]
+testAssociative:{[f;x;y;z] (f[f[x;y];z])~f[x;f[y;z]]}
+
+/ Identity: f[x;identity] = x
+testIdentity:{[f;x;identity] (f[x;identity])~x}
+```
+
+### Cross-Table Consistency
+```q
+/ Check if aggregate matches detail
+aggregateMatches:{[detailVals;aggVal] (sum detailVals)~aggVal}
+
+/ Check if related tables have matching row counts (1:1 relationships)
+matchingCounts:{[tbl1;tbl2] (count tbl1)=count tbl2}
+```
 
 ## Output Format
 
