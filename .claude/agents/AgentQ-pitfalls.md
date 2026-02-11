@@ -488,6 +488,64 @@ outliers:sum not v within(lowerBound;upperBound)
 
 ---
 
+## Block Comment Syntax
+
+### The Error
+
+A line containing **only** `/` (with no text after it) enters multi-line block comment mode. Every line after it is silently ignored until a line containing only `\` is encountered.
+
+```q
+/ WRONG - bare / on its own line triggers block comment mode
+calcVWAP:{[t] ...}
+
+/                   ← THIS LINE STARTS A BLOCK COMMENT
+                    ← everything below here is silently ignored!
+
+calcTWAP:{[t] ...}  ← this function is NEVER defined
+```
+
+This is **completely silent** — no error, no warning. Functions are missing at runtime.
+
+Contrast with safe comment forms:
+
+```q
+/ This is a normal comment - safe
+/ .                 ← safe separator line
+/ ---               ← safe separator line
+```
+
+### Why It Happens
+
+In Python (`#`), JavaScript (`//`), and C++ (`//`), a blank comment line is harmless. LLMs generate bare `/` lines as visual separators between documentation blocks, section dividers, or blank comment lines. In q, this is a critical syntax error that silently swallows subsequent code.
+
+### The Correct Pattern
+
+**Always include at least one character after `/`:**
+
+```q
+/ .      ← safe
+/ ---    ← safe
+/        ← DANGEROUS — block comment mode!
+```
+
+### Real-World Incidents
+
+**Iteration 5** (`test_ohlc.q`): Bare `/` separator lines silently commented out all subsequent test functions. No error was reported.
+
+**Iteration 6** (`twap.q`): Six bare `/` lines prevented all function definitions from loading. The functions were completely absent at runtime.
+
+### Detection Rule
+
+Scan for bare `/` lines before running any `.q` file:
+
+```bash
+grep -n "^/$" file.q
+```
+
+Any match is a bug. Fix by adding text after the `/`.
+
+---
+
 ## Summary of Most Common Errors
 
 1. **Function calls**: Using `f(x)` instead of `f x` or `f[x]` ← THIS IS #1
@@ -500,6 +558,7 @@ outliers:sum not v within(lowerBound;upperBound)
 8. **Table clearing**: Using `::` assignment instead of `delete from`
 9. **Timestamp division**: Division produces float, not timespan
 10. **Keywords as variables**: Using `lower`, `upper`, etc. as variable names
+11. **Bare `/` lines**: A lone `/` line silently activates block comment mode
 
 ---
 
@@ -547,6 +606,11 @@ trade::0#trade                   ← WRONG (becomes type 0h)
 / TIMESTAMP ARITHMETIC
 (maxT-minT)%2                    ← WRONG (returns float)
 0D00:00:00.000000001*(`long$(maxT-minT))div 2  ← CORRECT (timespan)
+
+/ COMMENT LINES
+/ some text       ← CORRECT (single-line comment)
+/ .               ← CORRECT (safe separator)
+/                 ← WRONG! Bare / starts block comment mode — all code below is silently ignored
 ```
 
 ---

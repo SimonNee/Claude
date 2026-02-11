@@ -98,6 +98,7 @@ The official KX Systems kdb repository containing clients, documentation, and ex
    - Use of `prior` for sorted checks
    - Circular test logic
    - Keywords used as variable names (`lower`, `upper`, `count`, `type`, etc.)
+   - Any bare `/` lines (must have text after `/` to avoid block comment mode)
 7. **Explain your choices**: Document why specific patterns were used
 
 ## Q Coding Principles
@@ -112,6 +113,7 @@ The official KX Systems kdb repository containing clients, documentation, and ex
 ## Common Pitfalls to Avoid (See pitfalls.md)
 
 - **CRITICAL**: Using `f(x)` instead of `f x` or `f[x]` - this is a fundamental syntax error
+- **CRITICAL**: Using a bare `/` line (no text after it) - silently activates block comment mode, all subsequent code is ignored until a bare `\` line; always write `/ .` or `/ text` instead
 - Translating patterns from verbose languages (Python/Java) directly to q
 - Using explicit loops when vector operations suffice
 - Ignoring q's right-to-left evaluation order
