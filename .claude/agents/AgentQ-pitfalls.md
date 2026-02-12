@@ -559,6 +559,9 @@ Any match is a bug. Fix by adding text after the `/`.
 9. **Timestamp division**: Division produces float, not timespan
 10. **Keywords as variables**: Using `lower`, `upper`, etc. as variable names
 11. **Bare `/` lines**: A lone `/` line silently activates block comment mode
+12. **`.z.ph` input format**: Receives `(pathQuery; headerDict)`, not raw HTTP text; root is `""` not `"/"`
+13. **`@[f;x;h]` iterates over lists**: Use `.[f;enlist x;h]` or normalise to dict/atom first
+14. **Single char is atom**: `"/"` is type -10h (char atom); use `enlist"/"` for a string (type 10h)
 
 ---
 
@@ -611,6 +614,21 @@ trade::0#trade                   ← WRONG (becomes type 0h)
 / some text       ← CORRECT (single-line comment)
 / .               ← CORRECT (safe separator)
 /                 ← WRONG! Bare / starts block comment mode — all code below is silently ignored
+
+/ .z.ph INPUT FORMAT
+.z.ph:{[x] first x}         ← x[0] is path+query string, x[1] is header dict
+/ root path is "" (empty), not "/"
+
+/ PROTECTED EVAL WITH LISTS
+@[f;generalList;h]           ← WRONG! Iterates over list elements
+.[f;enlist generalList;h]    ← CORRECT — passes list as single arg
+@[f;dictOrAtom;h]            ← CORRECT — dict/atom not iterated
+
+/ SINGLE CHAR VS STRING
+"/"                          ← char atom (type -10h)
+enlist"/"                    ← 1-element string (type 10h)
+"?" vs "/"                   ← WRONG! type error — vs needs string
+"?" vs enlist"/"             ← CORRECT
 ```
 
 ---

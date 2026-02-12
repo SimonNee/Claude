@@ -24,8 +24,8 @@ strContains:{[haystack;needle] 0<count ss[haystack;needle]}
 / Iteration 1 tests
 / .
 
-/ Build a sample response once for all tests
-resp:.z.ph["GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+/ Build a sample response using KDB+'s real input format: (pathQuery; headerDict)
+resp:.z.ph(""; (enlist`Host)!enlist"localhost")
 
 / Test 1: .z.ph returns a string (type 10h)
 assert["response is a string (type 10h)"; 10h=type resp]
@@ -144,7 +144,7 @@ assert["parseReq no-QS method is GET"; "GET"~parsedNoQS[`method]]
 / .
 
 / Test 28: .z.ph response to unrouted path returns HTTP/1.1 404 (iteration 3 router)
-echoResp:.z.ph sampleReq
+echoResp:.z.ph("/api/table?name=trade&n=10"; (enlist`Host)!enlist"localhost:5050")
 assert["unrouted path returns HTTP/1.1 404"; "HTTP/1.1 404"~(count "HTTP/1.1 404")#echoResp]
 
 / Test 29: .z.ph response is a string (type 10h)
@@ -155,7 +155,7 @@ assert["echo response is type 10h"; 10h=type echoResp]
 / .
 
 / Test 30: GET / returns HTTP/1.1 200
-rootResp:.z.ph["GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+rootResp:.z.ph(""; (enlist`Host)!enlist"localhost")
 assert["GET / returns HTTP/1.1 200"; strContains[rootResp;"HTTP/1.1 200"]]
 
 / Test 31: GET / response contains <!DOCTYPE html>
@@ -168,7 +168,7 @@ assert["GET / response contains id='process-info'"; strContains[rootResp;"id='pr
 assert["GET / response contains id='object-browser'"; strContains[rootResp;"id='object-browser'"]]
 
 / Test 34: GET /no-such-page returns HTTP/1.1 404
-notFoundResp:.z.ph["GET /no-such-page HTTP/1.1\r\nHost: localhost\r\n\r\n"]
+notFoundResp:.z.ph("/no-such-page"; (enlist`Host)!enlist"localhost")
 assert["GET /no-such-page returns HTTP/1.1 404"; strContains[notFoundResp;"HTTP/1.1 404"]]
 
 / Test 35: GET /no-such-page response contains id='not-found'

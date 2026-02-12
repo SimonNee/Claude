@@ -245,24 +245,36 @@ handle404:{[req]
 / routes: dictionary mapping path symbols to handler functions
 routes:(enlist`$"/")!enlist handleRoot
 
+/ buildReq: build a parsed request dict from KDB+'s .z.ph input
+/ KDB+ passes either a string (path+query) or (path+query; headerDict)
+/ For root path, KDB+ passes "" not "/"
+buildReq:{[x]
+  / extract path+query string and headers
+  rawPath:$[10h=type x; x; first x];
+  hdrs:$[0h=type x; x 1; (`$())!()];
+  / empty path means root — enlist to keep it a string (type 10h)
+  rawPath:$[0=count rawPath; enlist"/"; rawPath];
+  / split path from query string
+  pathParts:"?" vs rawPath;
+  pth:pathParts 0;
+  qs:$[1<count pathParts; pathParts 1; ""];
+  / ensure path starts with /
+  pth:$["/"~first pth; pth; "/",pth];
+  `method`path`query`version`headers!("GET";pth;parseQS qs;"HTTP/1.1";hdrs)
+ }
+
+/ dispatch: route a parsed request dict to the correct handler
+dispatch:{[parsed]
+  sym:`$parsed[`path];
+  handler:$[sym in key routes; routes sym; handle404];
+  handler parsed
+ }
+
 / .z.ph: route incoming HTTP GET requests
-/ KDB+ may pass a string or a (string;dict) pair — normalise first
 .z.ph:{[x]
-  / log raw input type and shape for debugging
-  -1 "zph: .z.ph called, type=",string[type x],", count=",string count x;
-  / normalise: if x is not a string, take first element
-  req:$[10h=type x; x; first x];
-  -1 "zph: req=",req;
-  @[
-    {[req]
-      parsed:parseReq req;
-      sym:`$parsed[`path];
-      handler:$[sym in key routes; routes sym; handle404];
-      handler parsed
-    };
-    req;
-    {[e] -1 "zph ERROR: ",e; httpResp["500 Internal Server Error";"text/html; charset=utf-8";htmlPage["500 Error";"<section class='card'><h2>500 Internal Server Error</h2><pre>",e,"</pre></section>"]]}
-  ]
+  parsed:buildReq x;
+  -1 "zph: GET ",parsed[`path];
+  @[dispatch; parsed; {[e] -1 "zph ERROR: ",e; httpResp["500 Internal Server Error";"text/html; charset=utf-8";htmlPage["500 Error";"<section class='card'><h2>500 Internal Server Error</h2><pre>",e,"</pre></section>"]]}]
  }
 
 -1 "zph loaded: iteration 3 — router + landing page";
