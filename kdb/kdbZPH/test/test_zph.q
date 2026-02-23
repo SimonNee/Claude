@@ -206,6 +206,44 @@ assert["html404 contains id='not-found'"; strContains[nfOut;"id='not-found'"]]
 / Test 43: html404 includes the path argument in the output
 assert["html404 includes the path /x"; strContains[nfOut;"/x"]]
 
+/ .
+/ Iteration 4 tests — static file server
+/ .
+
+/ Test 44: mimeType css returns text/css
+assert["mimeType css returns text/css"; strContains[mimeType "css";"text/css"]]
+
+/ Test 45: mimeType js returns application/javascript
+assert["mimeType js returns application/javascript"; strContains[mimeType "js";"application/javascript"]]
+
+/ Test 46: handleStatic serves style.css with 200
+staticResp:.z.ph("/static/style.css"; (enlist`Host)!enlist"localhost")
+assert["GET /static/style.css returns 200"; strContains[staticResp;"HTTP/1.1 200"]]
+
+/ Test 47: handleStatic style.css response contains CSS content
+assert["GET /static/style.css body contains css"; strContains[staticResp;"body{"]]
+
+/ Test 48: handleStatic style.css Content-Type is text/css
+assert["GET /static/style.css Content-Type is text/css"; strContains[staticResp;"text/css"]]
+
+/ Test 49: handleStatic missing file returns 404
+missingResp:.z.ph("/static/no-such-file.css"; (enlist`Host)!enlist"localhost")
+assert["GET /static/missing returns 404"; strContains[missingResp;"HTTP/1.1 404"]]
+
+/ Test 50: handleStatic path traversal rejected
+traversalResp:.z.ph("/static/../src/zph.q"; (enlist`Host)!enlist"localhost")
+assert["path traversal rejected (400 or 404)"; strContains[traversalResp;"HTTP/1.1 400"] or strContains[traversalResp;"HTTP/1.1 404"]]
+
+/ Test 51: GET / still works after htmlPage change
+rootResp2:.z.ph(""; (enlist`Host)!enlist"localhost")
+assert["GET / still returns 200 after htmlPage change"; strContains[rootResp2;"HTTP/1.1 200"]]
+
+/ Test 52: GET / head contains link to stylesheet
+assert["GET / head links to /static/style.css"; strContains[rootResp2;"/static/style.css"]]
+
+/ Test 53: GET / head does NOT contain inline <style> tag
+assert["GET / head has no inline <style> tag"; not strContains[rootResp2;"<style>"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

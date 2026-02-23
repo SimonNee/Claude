@@ -99,28 +99,6 @@ parseReq:{[raw]
 /   bodyContent - HTML string for the <main> element
 / returns: full HTML document string
 htmlPage:{[ttl;bodyContent]
-  css:raze(
-    "*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}";
-    "body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;font-size:14px;line-height:1.5;color:#222;background:#f5f5f5}";
-    ".site-header{background:#1a1a2e;color:#e0e0e0;padding:12px 24px}";
-    ".site-header h1{font-size:18px;font-weight:600;letter-spacing:0.02em}";
-    ".site-main{max-width:1100px;margin:24px auto;padding:0 24px;display:flex;flex-direction:column;gap:20px}";
-    ".site-footer{text-align:center;padding:16px;color:#888;font-size:12px}";
-    ".card{background:#fff;border:1px solid #ddd;border-radius:4px;padding:20px 24px}";
-    ".card h2{font-size:15px;font-weight:600;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #eee;color:#333}";
-    ".info-grid{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px}";
-    ".info-grid dt{font-weight:500;color:#555}";
-    ".info-grid dd{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;color:#222}";
-    ".ns-group{margin-bottom:20px}";
-    ".ns-group:last-child{margin-bottom:0}";
-    ".ns-group h3{font-size:13px;font-weight:600;color:#555;margin-bottom:8px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}";
-    ".obj-table{width:100%;border-collapse:collapse;font-size:13px}";
-    ".obj-table th{text-align:left;padding:6px 10px;background:#f8f8f8;border-bottom:1px solid #ddd;font-weight:600;color:#444}";
-    ".obj-table td{padding:5px 10px;border-bottom:1px solid #f0f0f0}";
-    ".obj-table tr:last-child td{border-bottom:none}";
-    ".obj-table tr:hover td{background:#f9f9ff}";
-    "code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;background:#f4f4f4;padding:1px 4px;border-radius:2px}"
-  );
   raze(
     "<!DOCTYPE html>";
     "<html lang='en'>";
@@ -128,7 +106,7 @@ htmlPage:{[ttl;bodyContent]
     "<meta charset='utf-8'>";
     "<meta name='viewport' content='width=device-width,initial-scale=1'>";
     "<title>",ttl,"</title>";
-    "<style>",css,"</style>";
+    "<link rel='stylesheet' href='/static/style.css'>";
     "</head>";
     "<body>";
     "<header class='site-header'><h1>kdb+ process browser</h1></header>";
@@ -264,10 +242,15 @@ buildReq:{[x]
  }
 
 / dispatch: route a parsed request dict to the correct handler
+/ prefix route: /static/* goes to handleStatic before dict lookup
 dispatch:{[parsed]
-  sym:`$parsed[`path];
-  handler:$[sym in key routes; routes sym; handle404];
-  handler parsed
+  pth:parsed[`path];
+  $["/static/" ~ (count "/static/")#pth;
+    handleStatic parsed;
+    [sym:`$pth;
+     handler:$[sym in key routes; routes sym; handle404];
+     handler parsed]
+   ]
  }
 
 / .z.ph: route incoming HTTP GET requests
@@ -277,4 +260,36 @@ dispatch:{[parsed]
   @[dispatch; parsed; {[e] -1 "zph ERROR: ",e; httpResp["500 Internal Server Error";"text/html; charset=utf-8";htmlPage["500 Error";"<section class='card'><h2>500 Internal Server Error</h2><pre>",e,"</pre></section>"]]}]
  }
 
--1 "zph loaded: iteration 3 — router + landing page";
+/ .
+/ Iteration 4: static file server
+/ .
+
+/ mimeType: map file extension strings to MIME type strings
+mimeType:("css";"js";"html";"txt";"json")!("text/css; charset=utf-8";"application/javascript; charset=utf-8";"text/html; charset=utf-8";"text/plain; charset=utf-8";"application/json; charset=utf-8")
+
+/ handleStatic: serve files from the static/ directory
+/ arg: req - parsed request dict (from buildReq)
+/ returns: HTTP response string (200 with file, 400 bad path, or 404 not found)
+handleStatic:{[req]
+  / strip the /static/ prefix to get the relative filename
+  filename:(count "/static/")_ req[`path];
+  / path traversal check: reject any component equal to ".."
+  if[".." in "/" vs filename;
+    :httpResp["400 Bad Request";"text/plain";"bad path"]
+   ];
+  / build full filesystem path (relative to process working directory)
+  fullPath:"static/",filename;
+  / extract file extension: everything after the last "."
+  ext:$["." in filename; last "." vs filename; ""];
+  / look up MIME type; fall back to octet-stream for unknown extensions
+  ct:$[ext in key mimeType; mimeType ext; "application/octet-stream"];
+  / attempt to read the file; on error return generic null (::)
+  content:@[{"\n" sv read0 hsym`$x}; fullPath; {[e](::)}];
+  / if file not found or unreadable, return 404
+  if[(::)~content;
+    :httpResp["404 Not Found";"text/html; charset=utf-8";htmlPage["404 Not Found";html404 req[`path]]]
+   ];
+  httpResp["200 OK";ct;content]
+ }
+
+-1 "zph loaded: iteration 4 — static file server";
