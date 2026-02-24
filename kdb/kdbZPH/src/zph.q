@@ -417,3 +417,112 @@ handleEval:{[req]
 postRoutes:(`ping`eval)!(handlePing;handleEval)
 
 -1 "zph loaded: iteration 6 — REPL endpoint";
+
+/ .
+/ Iteration 7: data explorer
+/ .
+
+/ apiTables: return a list of dicts with table metadata for all default-namespace tables
+/ each entry: `name`rows`cols!(nameStr; rowCount; colCount)
+/ returns: jsonResp wrapping the list
+apiTables:{[]
+  nms:tables[];
+  / for each table name, build a metadata dict
+  rows:{[nm]
+    tbl:value nm;
+    / unkey keyed tables before counting rows
+    t:$[99h=type tbl; value tbl; tbl];
+    `name`rows`cols!(string nm; count t; count cols t)
+   }each nms;
+  jsonResp rows
+ }
+
+/ apiMeta: return schema for a single named table
+/ req: parsed request dict; expects req[`query][`table] = table name string
+/ returns: jsonResp with meta columns (c, t, f, a); or jsonErr if table not found
+/ Note: meta t column is char (e.g. "j","f","p") — .j.j serialises correctly as-is
+apiMeta:{[req]
+  qry:req[`query];
+  / extract table name string; if key missing, return error
+  tblName:$[`table in key qry; qry[`table]; ""];
+  if[0=count tblName; :jsonErr["table parameter required"]];
+  tblSym:`$tblName;
+  / validate: table must exist in default namespace
+  if[not tblSym in tables[]; :jsonErr["no such table"]];
+  / meta returns a keyed table; 0! removes the key before serialising
+  jsonResp 0!meta value tblSym
+ }
+
+/ apiData: return paginated rows from a table as column-oriented JSON
+/ req: parsed request dict; expects query params: table, n (default 100), offset (default 0)
+/ returns: jsonResp with column-oriented data; or jsonErr if table not found
+apiData:{[req]
+  qry:req[`query];
+  tblName:$[`table in key qry; qry[`table]; ""];
+  if[0=count tblName; :jsonErr["table parameter required"]];
+  tblSym:`$tblName;
+  if[not tblSym in tables[]; :jsonErr["no such table"]];
+  / parse n and offset from query string; default 100 and 0
+  / query values are strings (e.g. "100") — "I"$ casts string to int
+  nRows:"I"$$[`n in key qry; qry[`n]; "100"];
+  nRows:$[null nRows; 100i; nRows];
+  offsetRows:"I"$$[`offset in key qry; qry[`offset]; "0"];
+  offsetRows:$[null offsetRows; 0i; offsetRows];
+  / retrieve the table; unkey keyed tables
+  tbl:value tblSym;
+  tbl:$[99h=type tbl; value tbl; tbl];
+  / apply pagination: drop offsetRows, then take nRows
+  page:nRows#offsetRows _ tbl;
+  / return column-oriented JSON
+  jsonResp flip page
+ }
+
+/ handler wrappers (each takes req and delegates to pure function)
+apiTablesHandler:{[req] apiTables[]}
+apiMetaHandler:{[req] apiMeta req}
+apiDataHandler:{[req] apiData req}
+
+/ wire new GET routes
+routes:routes , (`$"/api/tables";`$"/api/meta";`$"/api/data")!(apiTablesHandler;apiMetaHandler;apiDataHandler)
+
+/ htmlExplorer: build the explorer page section
+/ returns: HTML string with table picker, schema panel, and data grid
+htmlExplorer:{[]
+  picker:"<div class='explorer-controls'><label for='tblPicker'>Table:</label> <select id='tblPicker'><option value=''>-- select --</option></select></div>";
+  schemaPanel:"<div id='schema' class='explorer-panel'></div>";
+  gridPanel:"<div id='grid' class='explorer-panel'></div>";
+  "<section id='explorer' class='card'><h2>Data Explorer</h2>",picker,schemaPanel,gridPanel,"</section>"
+ }
+
+/ handleExplorer: serve the explorer HTML page
+handleExplorer:{[req]
+  httpResp["200 OK";"text/html; charset=utf-8";htmlPage["Data Explorer";htmlExplorer[]]]
+ }
+
+/ wire the /explorer route
+routes:routes , (enlist`$"/explorer")!enlist handleExplorer
+
+/ update htmlPage to include nav links between pages
+/ redefine htmlPage to add nav after <h1>
+htmlPage:{[ttl;bodyContent]
+  nav:"<nav class='site-nav'><a href='/'>Dashboard</a> <a href='/explorer'>Explorer</a> <a href='/repl'>REPL</a></nav>";
+  raze(
+    "<!DOCTYPE html>";
+    "<html lang='en'>";
+    "<head>";
+    "<meta charset='utf-8'>";
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    "<title>",ttl,"</title>";
+    "<link rel='stylesheet' href='/static/style.css'>";
+    "</head>";
+    "<body>";
+    "<header class='site-header'><h1>kdb+ process browser</h1>",nav,"</header>";
+    "<main class='site-main'>",bodyContent,"</main>";
+    "<footer class='site-footer'>kdb+ process browser</footer>";
+    "<script src='/static/app.js'></script>";
+    "</body>";
+    "</html>"
+  )
+ }
+
+-1 "zph loaded: iteration 7 — data explorer";

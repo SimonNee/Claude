@@ -333,6 +333,52 @@ assert["POST eval 1+1 response contains ok"; strContains[er;"ok"]]
 be:.z.pp enlist "{\"action\":\"eval\",\"expr\":\"badvar123\"}"
 assert["POST eval bad expr returns HTTP 200 with ok false"; strContains[be;"false"]]
 
+/ .
+/ Iteration 7 tests — data explorer
+/ .
+
+/ create a test table so the API has data to work with
+testTable:([]sym:`AAPL`GOOG`MSFT;price:100 200 300f;vol:1000 2000 3000)
+
+/ Test 77: GET /api/tables returns HTTP 200
+t77:.z.ph("/api/tables"; (enlist`Host)!enlist"localhost")
+assert["GET /api/tables returns HTTP 200"; strContains[t77;"HTTP/1.1 200"]]
+
+/ Test 78: /api/tables response is valid JSON (contains "[")
+assert["/api/tables response is valid JSON (contains [)"; strContains[t77;"["]]
+
+/ Test 79: /api/tables response contains testTable name
+assert["/api/tables response contains testTable"; strContains[t77;"testTable"]]
+
+/ Test 80: GET /api/meta?table=testTable returns HTTP 200
+t80:.z.ph("/api/meta?table=testTable"; (enlist`Host)!enlist"localhost")
+assert["GET /api/meta?table=testTable returns HTTP 200"; strContains[t80;"HTTP/1.1 200"]]
+
+/ Test 81: /api/meta response contains column name sym
+assert["/api/meta response contains column sym"; strContains[t80;"sym"]]
+
+/ Test 82: GET /api/data?table=testTable returns HTTP 200
+t82:.z.ph("/api/data?table=testTable"; (enlist`Host)!enlist"localhost")
+assert["GET /api/data?table=testTable returns HTTP 200"; strContains[t82;"HTTP/1.1 200"]]
+
+/ Test 83: /api/data response is column-oriented (contains "sym")
+assert["/api/data response is column-oriented (contains sym)"; strContains[t82;"sym"]]
+
+/ Test 84: GET /api/data?table=testTable&n=1&offset=1 returns HTTP 200 (pagination works)
+t84:.z.ph("/api/data?table=testTable&n=1&offset=1"; (enlist`Host)!enlist"localhost")
+assert["GET /api/data pagination returns HTTP 200"; strContains[t84;"HTTP/1.1 200"]]
+
+/ Test 85: GET /api/meta?table=noSuchTable returns HTTP 400
+t85:.z.ph("/api/meta?table=noSuchTable"; (enlist`Host)!enlist"localhost")
+assert["GET /api/meta for unknown table returns HTTP 400"; strContains[t85;"HTTP/1.1 400"]]
+
+/ Test 86: GET /explorer returns HTTP 200
+t86:.z.ph("/explorer"; (enlist`Host)!enlist"localhost")
+assert["GET /explorer returns HTTP 200"; strContains[t86;"HTTP/1.1 200"]]
+
+/ Test 87: /explorer response contains tblPicker
+assert["/explorer response contains tblPicker"; strContains[t86;"tblPicker"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";
