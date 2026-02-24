@@ -49,10 +49,10 @@ postRoutes:(`ping`eval)!(handlePing;handleEval)
 
 ---
 
-## What Has Been Built (Iterations 1–6)
+## What Has Been Built (Iterations 1–7)
 
 **Source:** `src/zph.q`
-**Tests:** `test/test_zph.q` — 76 passing tests
+**Tests:** `test/test_zph.q` — 87 passing tests
 
 ### Function Reference
 
@@ -82,6 +82,10 @@ postRoutes:(`ping`eval)!(handlePing;handleEval)
 | `qToJson` | `[x]` | Converts any q value to a JSON string; column-oriented for tables; `string each` fallback for mixed lists |
 | `handleEval` | `[req]` | POST action `eval` — evaluates `req\`expr`, returns `{"ok":true/false,"result"/\"error":...}` |
 | `htmlRepl` | `[]` | HTML card with textarea, Run button, and output pre for the browser REPL |
+| `apiTables` | `[]` | Returns JSON list of all default-namespace tables with row/col counts |
+| `apiMeta` | `[req]` | Returns schema for one table via `0!meta` (unkeyed) as JSON |
+| `apiData` | `[req]` | Returns paginated column-oriented JSON for a table; params: `table`, `n`, `offset` |
+| `htmlExplorer` | `[]` | HTML section with table picker, schema panel, and data grid |
 | `.z.ph` | `[x]` | KDB+ HTTP GET entry point; `buildReq` → `dispatch` with 500 error trap |
 | `.z.pp` | `[x]` | KDB+ HTTP POST entry point; `parsePost` → `.j.k` → action dispatch |
 
@@ -184,7 +188,8 @@ evalExpr:{[exprStr]
 - `/explorer` route — HTML page with table picker, schema panel, data grid (vanilla JS)
 
 **q pitfalls:**
-- `meta tbl` returns a table; the `t` column is **char** (type `"c"`), not symbol — single chars like `"f"`, `"j"`, `"p"`
+- **`meta tbl` returns a *keyed* table** — `flip` on it throws `'nyi`; use `0!meta tbl` to unkey before serialising or further processing
+- The `t` column in meta is **char** (type `"c"`), not symbol — single chars like `"f"`, `"j"`, `"p"`
 - `tables[]` only returns default namespace tables; named namespaces (`.myns.trade`) need `` key `.myns` `` filtered by type
 - Pagination: `n#offset _ tbl` works for in-memory unkeyed tables; `value tbl` first for keyed tables
 - Temporal columns: `.j.j` serializes as q string form — acceptable for display

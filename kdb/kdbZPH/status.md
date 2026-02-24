@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 6 complete — **Next: Iteration 7 (Data Explorer)**
+**Current Iteration:** 7 complete — **Next: Iteration 8 (WebSocket REPL)**
 
 ## Completed Iterations
 
@@ -15,35 +15,35 @@
 | 4 | Static file server (`mimeType`, `handleStatic`, prefix routing, CSS extraction) | ✓ Complete |
 | 5 | POST handler + JSON layer (`parsePost`, `jsonResp`, `jsonErr`, `postRoutes`, `.z.pp`, `handlePing`) | ✓ Complete |
 | 6 | q REPL endpoint (`evalExpr`, `qToJson`, `handleEval`, `htmlRepl`, `static/app.js`) | ✓ Complete |
+| 7 | Data explorer (`apiTables`, `apiMeta`, `apiData`, `/explorer` route, nav links) | ✓ Complete |
 
-**Tests:** 76 passing in `test/test_zph.q`
+**Tests:** 87 passing in `test/test_zph.q`
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `src/zph.q` | All implementation — HTTP handler, parser, router, HTML builders, static server, POST handler, REPL |
-| `test/test_zph.q` | Test suite — 76 tests |
+| `src/zph.q` | All implementation |
+| `test/test_zph.q` | Test suite — 87 tests |
 | `static/style.css` | Site stylesheet |
-| `static/app.js` | Browser REPL — fetch-based eval, Ctrl+Enter shortcut |
+| `static/app.js` | Browser REPL + data explorer frontend |
 | `cfg/` | Empty — reserved for config (Iteration 11) |
 | `project.md` | Full project plan and iteration roadmap |
 | `status.md` | This file |
 
 ## Next Steps
 
-### Iteration 7: Data Explorer
-1. `GET /api/tables` — JSON list of tables with row/col counts
-2. `GET /api/meta?table=X` — table schema as JSON
-3. `GET /api/data?table=X&n=100&offset=0` — paginated rows as column-oriented JSON
-4. `/explorer` route — HTML page with table picker, schema panel, data grid (vanilla JS)
-5. Wire new GET routes into `routes` dict
+### Iteration 8: WebSocket REPL
+1. Define `.z.ws[x]` — parses JSON message, evals, sends result back via `neg[.z.w]`
+2. Add `wsEval[msgStr]` — pure string-in/string-out function (testable without a live socket)
+3. Support correlation `"id"` field so browser can match responses to requests
+4. Update browser JS to use `WebSocket` instead of `fetch` for REPL; add connection status indicator
 
 **Key pitfalls:**
-- `meta tbl` returns a table; the `t` column is **char** (type `"c"`), not symbol
-- `tables[]` only returns default namespace tables
-- Pagination: `n#offset _ tbl` for unkeyed tables; `value tbl` first for keyed tables
-- Temporal columns: `.j.j` serializes as q string form — acceptable for display
+- `x` in `.z.ws` is a string if browser sends text frame, byte vector if binary — check `10h=type x`
+- Send with `neg[.z.w] responseString` — `.z.w` is only valid **during** the callback
+- KDB+ handles the WebSocket HTTP Upgrade automatically when `.z.ws` is defined — do not intercept in `.z.ph`
+- Test `wsEval` as a pure function; document manual browser test for the live WS connection
 
 ## Bug History
 
@@ -53,6 +53,7 @@
 | 2 | 0 | 0 | — |
 | 3 | 0 | 0 | Browser compatibility fix applied (commit 01e547e) |
 | 4 | 0 | 0 | — |
-| 5 (object browser) | 1 | 1 | `key\`` returns namespace names only — fixed with `system "f"`/`system "v"`; `ss` wildcard pitfall in test |
-| 5 (POST handler) | 0 | 1 | Test needle with `*` crashed `ss` — trimmed needle |
-| 6 | 2 | 0 | `min[a;b]` is rank error (use `a&b`); `.j.k` returns symbol keys not string keys |
+| 5 (object browser) | 1 | 1 | `key\`` returns namespace names only; `ss` wildcard pitfall |
+| 5 (POST handler) | 0 | 1 | Test needle `*` crashed `ss` |
+| 6 | 2 | 0 | `min[a;b]` rank error; `.j.k` returns symbol keys |
+| 7 | 1 | 0 | `meta` returns keyed table; `flip` on it is `'nyi` — use `0!` first |
