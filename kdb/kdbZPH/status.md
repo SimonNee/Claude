@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 7 complete — **Next: Iteration 8 (WebSocket REPL)**
+**Current Iteration:** 7 complete (+ refactor) — **Next: Iteration 8 (WebSocket REPL)**
 
 ## Completed Iterations
 
@@ -18,6 +18,11 @@
 | 7 | Data explorer (`apiTables`, `apiMeta`, `apiData`, `/explorer` route, nav links) | ✓ Complete |
 
 **Tests:** 87 passing in `test/test_zph.q`
+
+## Pre-Iteration-8 Refactor (committed separately)
+- CORS header moved into `httpResp` — single source of truth for all responses
+- `jsonResp` and `jsonErr` simplified to call `httpResp` (removed inlined header strings)
+- Dead first `htmlPage` definition removed — one authoritative definition remains
 
 ## Files
 
@@ -44,6 +49,7 @@
 - Send with `neg[.z.w] responseString` — `.z.w` is only valid **during** the callback
 - KDB+ handles the WebSocket HTTP Upgrade automatically when `.z.ws` is defined — do not intercept in `.z.ph`
 - Test `wsEval` as a pure function; document manual browser test for the live WS connection
+- `wsEval` returns a JSON string for `neg[.z.w]` — it does NOT go through `httpResp`
 
 ## Bug History
 
@@ -56,4 +62,4 @@
 | 5 (object browser) | 1 | 1 | `key\`` returns namespace names only; `ss` wildcard pitfall |
 | 5 (POST handler) | 0 | 1 | Test needle `*` crashed `ss` |
 | 6 | 2 | 0 | `min[a;b]` rank error; `.j.k` returns symbol keys |
-| 7 | 1 | 0 | `meta` returns keyed table; `flip` on it is `'nyi` — use `0!` first |
+| 7 | 2 | 0 | `meta` returns keyed table (`'nyi` on flip); `n#tbl` recycles rows |
