@@ -471,8 +471,9 @@ apiData:{[req]
   / retrieve the table; unkey keyed tables
   tbl:value tblSym;
   tbl:$[99h=type tbl; value tbl; tbl];
-  / apply pagination: drop offsetRows, then take nRows
-  page:nRows#offsetRows _ tbl;
+  / apply pagination: drop offset, then take — cap nRows at available rows to prevent recycling
+  dropped:offsetRows _ tbl;
+  page:(nRows&count dropped)#dropped;
   / return column-oriented JSON
   jsonResp flip page
  }
