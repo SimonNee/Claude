@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 10 complete — **Next: Iteration 11 (Configuration + Polish)**
+**Current Iteration:** 10 complete — **PAUSED: Strategic review before Iteration 11**
 
 ## Completed Iterations
 
@@ -41,13 +41,27 @@
 | `project.md` | Full project plan and iteration roadmap |
 | `status.md` | This file |
 
-## Next Steps
+## Strategic Pause — Current Thinking
 
-### Iteration 11: Configuration + Polish
-1. `cfg/config.q` — row limits, allowed namespaces, history size with defaults
-2. `loadCfg[]` — loads config with fallback defaults
-3. Multi-namespace object browser (live refresh deferred here too)
-4. `GET /api/csv?table=X&n=1000` — table as CSV download
+Iterations 1–10 were a technical exploration — proving out the platform layer (HTTP, routing, WebSocket, plotting, eval, data API). That goal is complete. All the building blocks exist and are proven to work.
+
+**Iteration 11 as originally planned (config, CSV, namespace polish) is deferred.** Adding more to the current flat structure without a clearer architectural direction is premature.
+
+### Open Questions
+
+1. **Platform vs application** — kdbZPH is currently a general-purpose workbench. The more valuable thing may be to define a clean platform interface that focused business applications sit on top of, rather than continuing to expand the workbench itself.
+
+2. **Namespace/module structure** — the current flat global namespace works but doesn't compose well. A namespace-based structure (`.http`, `.router`, `.html`, `.api`, `.ws`, `.plot`) would make the platform reusable by business apps.
+
+3. **Business verticals** — q/kdb is not limited to finance. Viable verticals include F1 telemetry, engineering sensor data, biochem time series. Each would be a focused app built on the platform layer, not a generic tool.
+
+4. **What does a business app look like?** — how does it register routes, own its UI, and delegate plumbing to the platform? That interface needs designing before more code is written.
+
+### Next Steps (when ready)
+- Decide on platform interface design
+- Identify first focused business app / vertical
+- Refactor into namespace structure if proceeding with platform approach
+- Iteration 11 config work can follow once the above is settled
 
 ## Known Deferred Items
 
