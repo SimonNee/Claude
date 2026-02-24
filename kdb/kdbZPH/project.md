@@ -191,7 +191,8 @@ evalExpr:{[exprStr]
 - **`meta tbl` returns a *keyed* table** — `flip` on it throws `'nyi`; use `0!meta tbl` to unkey before serialising or further processing
 - The `t` column in meta is **char** (type `"c"`), not symbol — single chars like `"f"`, `"j"`, `"p"`
 - `tables[]` only returns default namespace tables; named namespaces (`.myns.trade`) need `` key `.myns` `` filtered by type
-- Pagination: `n#offset _ tbl` works for in-memory unkeyed tables; `value tbl` first for keyed tables
+- **`n#tbl` recycles when `n > count tbl`** — always cap: `dropped:offset _ tbl; (n&count dropped)#dropped`
+- Pagination: drop offset first, then capped take; `value tbl` first for keyed tables
 - Temporal columns: `.j.j` serializes as q string form — acceptable for display
 
 **Tests:** table list, meta schema, pagination, empty table, keyed table
