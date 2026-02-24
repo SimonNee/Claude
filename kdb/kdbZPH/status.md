@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 7 complete (+ refactor) — **Next: Iteration 8 (WebSocket REPL)**
+**Current Iteration:** 8 complete — **Next: Iteration 9 (Code Editor)**
 
 ## Completed Iterations
 
@@ -16,40 +16,44 @@
 | 5 | POST handler + JSON layer (`parsePost`, `jsonResp`, `jsonErr`, `postRoutes`, `.z.pp`, `handlePing`) | ✓ Complete |
 | 6 | q REPL endpoint (`evalExpr`, `qToJson`, `handleEval`, `htmlRepl`, `static/app.js`) | ✓ Complete |
 | 7 | Data explorer (`apiTables`, `apiMeta`, `apiData`, `/explorer` route, nav links) | ✓ Complete |
+| 8 | WebSocket REPL (`wsEval`, `.z.ws`, WS status badge, auto-reconnect) | ✓ Complete |
+| 9 | Code editor (`editor.js`, CodeMirror 6 via CDN, history, interpreter-style keybindings) | ✓ Complete |
 
-**Tests:** 87 passing in `test/test_zph.q`
+**Tests:** 99 passing in `test/test_zph.q`
 
 ## Pre-Iteration-8 Refactor (committed separately)
 - CORS header moved into `httpResp` — single source of truth for all responses
 - `jsonResp` and `jsonErr` simplified to call `httpResp` (removed inlined header strings)
 - Dead first `htmlPage` definition removed — one authoritative definition remains
 
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `src/zph.q` | All implementation |
-| `test/test_zph.q` | Test suite — 87 tests |
+| `test/test_zph.q` | Test suite — 96 tests |
 | `static/style.css` | Site stylesheet |
-| `static/app.js` | Browser REPL + data explorer frontend |
+| `static/app.js` | Browser REPL (WebSocket) + data explorer frontend |
 | `cfg/` | Empty — reserved for config (Iteration 11) |
 | `project.md` | Full project plan and iteration roadmap |
 | `status.md` | This file |
 
 ## Next Steps
 
-### Iteration 8: WebSocket REPL
-1. Define `.z.ws[x]` — parses JSON message, evals, sends result back via `neg[.z.w]`
-2. Add `wsEval[msgStr]` — pure string-in/string-out function (testable without a live socket)
-3. Support correlation `"id"` field so browser can match responses to requests
-4. Update browser JS to use `WebSocket` instead of `fetch` for REPL; add connection status indicator
+### Iteration 10: Visualization (Plotly.js)
+1. Add `GET /graph` route — page with chart area and controls
+2. Add POST action `"plot"` — evals expression, returns column-oriented JSON
+3. `toPlotData[tbl;chartType]` — converts q table to Plotly trace format
+4. Plotly.js from CDN; `Plotly.newPlot()` on receipt
 
-**Key pitfalls:**
-- `x` in `.z.ws` is a string if browser sends text frame, byte vector if binary — check `10h=type x`
-- Send with `neg[.z.w] responseString` — `.z.w` is only valid **during** the callback
-- KDB+ handles the WebSocket HTTP Upgrade automatically when `.z.ws` is defined — do not intercept in `.z.ph`
-- Test `wsEval` as a pure function; document manual browser test for the live WS connection
-- `wsEval` returns a JSON string for `neg[.z.w]` — it does NOT go through `httpResp`
+## Known Deferred Items
+
+| Issue | Deferred to |
+|-------|-------------|
+| Object browser does not refresh without a page reload | Iteration 11 (object browser rework) |
+| q syntax highlighting in CodeMirror (no q language mode implemented) | Iteration 9 follow-up or later |
+| Shift+Enter newline not working on iPadOS Safari/Brave | N/A — superseded by interpreter-style keybindings (Enter = newline) |
 
 ## Bug History
 
