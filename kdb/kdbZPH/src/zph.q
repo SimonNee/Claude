@@ -187,7 +187,7 @@ html404:{[pth]
 / htmlRepl: build the REPL section card
 / returns: HTML string for the REPL section
 htmlRepl:{[]
-  "<section id='repl' class='card'><h2>q REPL</h2><div class='repl-wrap'><div class='repl-header'><span id='ws-status' class='ws-status ws-disconnected'>disconnected</span></div><textarea id='expr' rows='3' placeholder='1+1'></textarea><div class='repl-controls'><button id='run'>Run</button><span class='repl-hint'>Ctrl+Enter to run</span></div><pre id='output' class='repl-output'></pre></div></section>"
+  "<section id='repl' class='card'><h2>q REPL</h2><div class='repl-wrap'><div class='repl-header'><span id='ws-status' class='ws-status ws-disconnected'>disconnected</span></div><div id='editor' class='cm-host'></div><div class='repl-controls'><button id='run'>Run</button><span class='repl-hint'>Ctrl+Enter to run</span></div><pre id='output' class='repl-output'></pre></div></section>"
  }
 
 / handleRoot: serve the process browser landing page
@@ -498,6 +498,7 @@ htmlPage:{[ttl;bodyContent]
     "<main class='site-main'>",bodyContent,"</main>";
     "<footer class='site-footer'>kdb+ process browser</footer>";
     "<script src='/static/app.js'></script>";
+    "<script type='module' src='/static/editor.js'></script>";
     "</body>";
     "</html>"
   )

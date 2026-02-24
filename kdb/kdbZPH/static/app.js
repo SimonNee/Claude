@@ -7,12 +7,13 @@
 (function () {
   'use strict';
 
-  var exprEl = document.getElementById('expr');
+  // detect REPL page by the CodeMirror host div (replaces the old textarea)
+  var editorEl = document.getElementById('editor');
   var runBtn = document.getElementById('run');
   var outputEl = document.getElementById('output');
   var statusEl = document.getElementById('ws-status');
 
-  if (!exprEl || !runBtn || !outputEl) return;
+  if (!editorEl || !runBtn || !outputEl) return;
 
   var ws = null;
   var idCounter = 0;
@@ -63,7 +64,8 @@
   }
 
   function runExpr() {
-    var expr = exprEl.value.trim();
+    // editor.js (ES module) sets window.getExpr when CodeMirror is ready
+    var expr = typeof window.getExpr === 'function' ? window.getExpr().trim() : '';
     if (!expr) {
       outputEl.textContent = '(empty expression)';
       return;
@@ -81,14 +83,9 @@
   runBtn.disabled = true;
   connect();
 
+  // key handling (Ctrl+Enter, ArrowUp/Down, Enter) is managed by editor.js
+  // the Run button click is the single entry point for expression submission
   runBtn.addEventListener('click', runExpr);
-
-  exprEl.addEventListener('keydown', function (ev) {
-    if (ev.ctrlKey && ev.key === 'Enter') {
-      ev.preventDefault();
-      runExpr();
-    }
-  });
 }());
 
 // ---- Data Explorer ----

@@ -43,3 +43,6 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;bac
 .ws-disconnected{background:#f8d7da;color:#721c24}
 .ws-connecting{background:#fff3cd;color:#856404}
 .ws-error{background:#f8d7da;color:#721c24}
+.cm-host{border:1px solid #ccc;border-radius:3px;min-height:60px;font-size:13px}
+.cm-host .cm-editor{min-height:60px}
+.cm-host .cm-editor.cm-focused{outline:2px solid #4a90d9;outline-offset:-1px}
