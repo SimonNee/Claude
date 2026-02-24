@@ -379,6 +379,42 @@ assert["GET /explorer returns HTTP 200"; strContains[t86;"HTTP/1.1 200"]]
 / Test 87: /explorer response contains tblPicker
 assert["/explorer response contains tblPicker"; strContains[t86;"tblPicker"]]
 
+/ .
+/ Iteration 8 tests — WebSocket REPL
+/ wsEval is a pure string-in/string-out function, testable without a live socket
+/ .
+
+/ Test 88: wsEval with valid expression returns type 10h
+ws88:wsEval "{\"id\":\"t88\",\"expr\":\"1+1\"}"
+assert["wsEval valid expr returns type 10h"; 10h=type ws88]
+
+/ Test 89: wsEval valid result contains ok
+assert["wsEval valid expr result contains ok"; strContains[ws88;"ok"]]
+
+/ Test 90: wsEval valid result echoes the correlation id
+assert["wsEval valid result echoes id t88"; strContains[ws88;"t88"]]
+
+/ Test 91: wsEval bad JSON returns type 10h
+ws91:wsEval "not valid json"
+assert["wsEval bad json returns type 10h"; 10h=type ws91]
+
+/ Test 92: wsEval bad JSON response contains error
+assert["wsEval bad json response contains error"; strContains[ws91;"error"]]
+
+/ Test 93: wsEval bad expression result contains false
+ws93:wsEval "{\"id\":\"t93\",\"expr\":\"badvar_zph_ws_test\"}"
+assert["wsEval bad expr result contains false"; strContains[ws93;"false"]]
+
+/ Test 94: wsEval binary frame (byte vector) returns type 10h
+ws94:wsEval 0x68656c6c6f
+assert["wsEval binary frame returns type 10h"; 10h=type ws94]
+
+/ Test 95: wsEval binary frame response contains error
+assert["wsEval binary frame response contains error"; strContains[ws94;"error"]]
+
+/ Test 96: .z.ws is defined as a lambda (type 100h)
+assert[".z.ws is defined"; 100h=type .z.ws]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

@@ -187,7 +187,7 @@ html404:{[pth]
 / htmlRepl: build the REPL section card
 / returns: HTML string for the REPL section
 htmlRepl:{[]
-  "<section id='repl' class='card'><h2>q REPL</h2><div class='repl-wrap'><textarea id='expr' rows='3' placeholder='1+1'></textarea><div class='repl-controls'><button id='run'>Run</button><span class='repl-hint'>Ctrl+Enter to run</span></div><pre id='output' class='repl-output'></pre></div></section>"
+  "<section id='repl' class='card'><h2>q REPL</h2><div class='repl-wrap'><div class='repl-header'><span id='ws-status' class='ws-status ws-disconnected'>disconnected</span></div><textarea id='expr' rows='3' placeholder='1+1'></textarea><div class='repl-controls'><button id='run'>Run</button><span class='repl-hint'>Ctrl+Enter to run</span></div><pre id='output' class='repl-output'></pre></div></section>"
  }
 
 / handleRoot: serve the process browser landing page
@@ -504,3 +504,45 @@ htmlPage:{[ttl;bodyContent]
  }
 
 -1 "zph loaded: iteration 7 — data explorer";
+
+/ .
+/ Iteration 8: WebSocket REPL
+/ .
+
+/ wsEval: process a WebSocket text message and return a JSON response string
+/ arg: msgStr - string (text frame) or byte vector (binary frame) from .z.ws
+/ returns: JSON string — caller sends via neg[.z.w]
+/ "id" field is echoed back so the browser can correlate response to request
+/ NOTE: long evals block the q main thread — acceptable for single-user workbench
+wsEval:{[msgStr]
+  / reject binary frames — only text (type 10h) supported
+  if[not 10h=type msgStr;
+    :.j.j `id`ok`error!("";0b;"binary frames not supported")
+   ];
+  / parse incoming JSON; treat parse failure as error
+  parsed:@[.j.k; msgStr; {[e](::)}];
+  if[(::)~parsed; :.j.j `id`ok`error!("";0b;"bad json")];
+  / extract correlation id (pass through) and expression
+  msgId:$[`id in key parsed; parsed`id; ""];
+  exprStr:$[`expr in key parsed; parsed`expr; ""];
+  if[0=count exprStr; :.j.j `id`ok`error!(msgId;0b;"missing expr")];
+  / eval and return result
+  res:evalExpr exprStr;
+  ok:first res;
+  $[ok;
+    .j.j `id`ok`result!(msgId;1b;qToJson last res);
+    .j.j `id`ok`error!(msgId;0b;last res)
+   ]
+ }
+
+/ .z.ws: WebSocket message entry point
+/ KDB+ handles the HTTP Upgrade handshake automatically when .z.ws is defined
+/ Do NOT intercept the Upgrade request in .z.ph
+/ x is a string (text frame) if the browser sends UTF-8 text; byte vector if binary
+.z.ws:{[x]
+  resp:wsEval x;
+  / .z.w is the current connection handle — only valid during this callback
+  @[neg[.z.w]; resp; {[e] -1 "ws send error: ",e}]
+ }
+
+-1 "zph loaded: iteration 8 — WebSocket REPL";

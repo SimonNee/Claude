@@ -37,3 +37,9 @@ code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;bac
 .explorer-panel p{color:#666;font-size:13px}
 .explorer-panel p.error{color:#c00}
 .grid-scroll{overflow-x:auto}
+.repl-header{display:flex;align-items:center;justify-content:flex-end;margin-bottom:4px}
+.ws-status{font-size:11px;padding:2px 8px;border-radius:10px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace}
+.ws-connected{background:#d4edda;color:#155724}
+.ws-disconnected{background:#f8d7da;color:#721c24}
+.ws-connecting{background:#fff3cd;color:#856404}
+.ws-error{background:#f8d7da;color:#721c24}

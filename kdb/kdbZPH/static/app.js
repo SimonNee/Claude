@@ -1,55 +1,85 @@
 // app.js — browser frontend for kdbZPH
 // Iteration 6: REPL (fetch-based eval)
 // Iteration 7: Data Explorer (table picker, schema panel, data grid)
+// Iteration 8: REPL (WebSocket-based eval)
 
-// ---- REPL ----
+// ---- REPL (WebSocket) ----
 (function () {
   'use strict';
 
   var exprEl = document.getElementById('expr');
   var runBtn = document.getElementById('run');
   var outputEl = document.getElementById('output');
+  var statusEl = document.getElementById('ws-status');
 
   if (!exprEl || !runBtn || !outputEl) return;
 
-  function showResult(text) {
-    outputEl.textContent = text;
+  var ws = null;
+  var idCounter = 0;
+
+  function setStatus(text, cls) {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.className = 'ws-status ' + cls;
+  }
+
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    ws = new WebSocket(proto + location.host + '/');
+    setStatus('connecting...', 'ws-connecting');
+
+    ws.onopen = function () {
+      setStatus('connected', 'ws-connected');
+      runBtn.disabled = false;
+    };
+
+    ws.onclose = function () {
+      setStatus('disconnected — reconnecting in 3s', 'ws-disconnected');
+      runBtn.disabled = true;
+      ws = null;
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = function () {
+      setStatus('error', 'ws-error');
+    };
+
+    ws.onmessage = function (ev) {
+      var data;
+      try { data = JSON.parse(ev.data); } catch (e) {
+        outputEl.textContent = 'parse error: ' + ev.data;
+        runBtn.disabled = false;
+        return;
+      }
+      if (data.ok) {
+        outputEl.textContent = typeof data.result === 'string'
+          ? data.result
+          : JSON.stringify(data.result, null, 2);
+      } else {
+        outputEl.textContent = 'ERROR: ' + (data.error || 'unknown error');
+      }
+      runBtn.disabled = false;
+    };
   }
 
   function runExpr() {
     var expr = exprEl.value.trim();
     if (!expr) {
-      showResult('(empty expression)');
+      outputEl.textContent = '(empty expression)';
       return;
     }
-
-    showResult('...');
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      outputEl.textContent = 'WebSocket not connected';
+      return;
+    }
+    idCounter += 1;
+    outputEl.textContent = '...';
     runBtn.disabled = true;
-
-    var body = JSON.stringify({ action: 'eval', expr: expr });
-
-    fetch('/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body
-    })
-      .then(function (resp) { return resp.json(); })
-      .then(function (data) {
-        if (data.ok) {
-          showResult(typeof data.result === 'string'
-            ? data.result
-            : JSON.stringify(data.result, null, 2));
-        } else {
-          showResult('ERROR: ' + (data.error || 'unknown error'));
-        }
-      })
-      .catch(function (err) {
-        showResult('fetch error: ' + err.message);
-      })
-      .finally(function () {
-        runBtn.disabled = false;
-      });
+    ws.send(JSON.stringify({ id: String(idCounter), expr: expr }));
   }
+
+  runBtn.disabled = true;
+  connect();
 
   runBtn.addEventListener('click', runExpr);
 
