@@ -547,3 +547,4 @@ wsEval:{[msgStr]
  }
 
 -1 "zph loaded: iteration 8 — WebSocket REPL";
+-1 "zph loaded: iteration 9 — code editor";
