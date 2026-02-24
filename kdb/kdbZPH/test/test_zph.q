@@ -254,6 +254,40 @@ obOut3:htmlObjectBrowser[]
 assert["htmlObjectBrowser shows plain variable name"; strContains[obOut3;"testVarZPH"]]
 assert["htmlObjectBrowser shows variable type number"; strContains[obOut3;"-7"]]
 
+/ .
+/ Iteration 5 tests — POST handler + JSON layer
+/ .
+
+/ Test 56: POST with ping action returns HTTP 200
+pingResp:.z.pp enlist "{\"action\":\"ping\"}"
+assert["POST ping returns HTTP 200"; strContains[pingResp;"HTTP/1.1 200"]]
+
+/ Test 57: ping response body contains "status"
+assert["POST ping body contains status"; strContains[pingResp;"status"]]
+
+/ Test 58: ping response body contains "ok"
+assert["POST ping body contains ok"; strContains[pingResp;"ok"]]
+
+/ Test 59: ping response has Content-Type application/json
+assert["POST ping Content-Type is application/json"; strContains[pingResp;"application/json"]]
+
+/ Test 60: ping response has Access-Control-Allow-Origin header
+assert["POST ping has CORS header"; strContains[pingResp;"Access-Control-Allow-Origin"]]
+
+/ Test 61: malformed JSON returns HTTP 400
+badJsonResp:.z.pp enlist "not valid json"
+assert["malformed JSON returns HTTP 400"; strContains[badJsonResp;"HTTP/1.1 400"]]
+
+/ Test 62: malformed JSON response contains "error"
+assert["malformed JSON body contains error"; strContains[badJsonResp;"error"]]
+
+/ Test 63: unknown action returns HTTP 400
+unknownResp:.z.pp enlist "{\"action\":\"no_such_action\"}"
+assert["unknown action returns HTTP 400"; strContains[unknownResp;"HTTP/1.1 400"]]
+
+/ Test 64: unknown action response contains "error"
+assert["unknown action body contains error"; strContains[unknownResp;"error"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

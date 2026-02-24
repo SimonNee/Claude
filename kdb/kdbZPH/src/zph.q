@@ -288,4 +288,66 @@ handleStatic:{[req]
   httpResp["200 OK";ct;content]
  }
 
--1 "zph loaded: iteration 4 — static file server";
+/ .
+/ Iteration 5: POST handler + JSON layer
+/ .
+
+/ parsePost: extract body string and headers from .z.pp argument
+/ .z.pp receives either a string (body only) or (body; headerDict)
+/ also handles enlist-wrapped single-element list for direct testing
+/ returns: dict with keys `body (string) and `headers (dict)
+parsePost:{[x]
+  tp:type x;
+  / plain string: body is x, no headers
+  if[10h=tp; :`body`headers!(x;(`$())!())];
+  / general list: first element is body string
+  / 1 element: no headers; 2+ elements: second is header dict
+  body:first x;
+  hdrs:$[1<count x; x 1; (`$())!()];
+  `body`headers!(body;hdrs)
+ }
+
+/ jsonResp: wrap data in HTTP 200 application/json response with CORS header
+/ arg: data - any q value serialisable by .j.j
+/ returns: full HTTP response string
+jsonResp:{[data]
+  body:.j.j data;
+  "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ",(string count body),"\r\nConnection: close\r\n\r\n",body
+ }
+
+/ jsonErr: return HTTP 400 response with JSON error body and CORS header
+/ arg: msg - error message string
+/ returns: full HTTP 400 response string
+jsonErr:{[msg]
+  body:.j.j enlist[`error]!enlist msg;
+  "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ",(string count body),"\r\nConnection: close\r\n\r\n",body
+ }
+
+/ handlePing: respond to ping action with status ok and current timestamp
+/ arg: req - parsed JSON dict (from .j.k)
+/ returns: jsonResp string
+handlePing:{[req]
+  jsonResp `status`ts!("ok";string .z.p)
+ }
+
+/ postRoutes: dict mapping action symbols to handler functions
+postRoutes:(enlist `ping)!enlist handlePing
+
+/ .z.pp: entry point for HTTP POST requests
+/ routes on "action" key in JSON body — NOT on URL path
+/ .z.pp does not receive the URL path at all
+.z.pp:{[x]
+  .[{[x]
+    pp:parsePost x;
+    body:pp`body;
+    / trap malformed JSON; (::) signals parse failure
+    parsed:@[.j.k; body; {[e](::)}];
+    if[(::)~parsed; :jsonErr["bad json"]];
+    / extract action key and dispatch
+    action:`$parsed`action;
+    handler:$[action in key postRoutes; postRoutes action; {[r]jsonErr["unknown action"]}];
+    handler parsed
+   }; enlist x; {[e] jsonErr e}]
+ }
+
+-1 "zph loaded: iteration 5 — POST handler";
