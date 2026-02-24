@@ -49,10 +49,10 @@ postRoutes:(`ping`eval)!(handlePing;handleEval)
 
 ---
 
-## What Has Been Built (Iterations 1–5)
+## What Has Been Built (Iterations 1–6)
 
 **Source:** `src/zph.q`
-**Tests:** `test/test_zph.q` — 64 passing tests
+**Tests:** `test/test_zph.q` — 76 passing tests
 
 ### Function Reference
 
@@ -78,6 +78,10 @@ postRoutes:(`ping`eval)!(handlePing;handleEval)
 | `jsonErr` | `[msg]` | Returns HTTP 400 `{"error":"..."}` response with CORS header |
 | `handlePing` | `[req]` | POST action `ping` — returns `{"status":"ok","ts":"..."}` |
 | `postRoutes` | dict | Action symbol → handler fn: `` (enlist`ping)!enlist handlePing `` |
+| `evalExpr` | `[exprStr]` | Protected eval: returns `(1b;result)` on success, `(0b;errString)` on failure |
+| `qToJson` | `[x]` | Converts any q value to a JSON string; column-oriented for tables; `string each` fallback for mixed lists |
+| `handleEval` | `[req]` | POST action `eval` — evaluates `req\`expr`, returns `{"ok":true/false,"result"/\"error":...}` |
+| `htmlRepl` | `[]` | HTML card with textarea, Run button, and output pre for the browser REPL |
 | `.z.ph` | `[x]` | KDB+ HTTP GET entry point; `buildReq` → `dispatch` with 500 error trap |
 | `.z.pp` | `[x]` | KDB+ HTTP POST entry point; `parsePost` → `.j.k` → action dispatch |
 
@@ -160,10 +164,11 @@ evalExpr:{[exprStr]
 - Pass expression as **string** (type 10h), not a symbol — `value "1+1"` executes q; `` value `sym `` looks up a variable
 - Result can be any q type including `(::)`, `()`, mixed lists, functions, tables — all must survive `qToJson`
 - For tables: use **column-oriented JSON** (`flip` then `.j.j`) — `{"col1":[...],"col2":[...]}` — compact and better for plotting
-- Row limit: `$[98h=type r; (min[1000;count r])#r; r]`
+- Row limit: `$[98h=type r; (1000&count r)#r; r]` — use `&` (min-dyadic), not `min[a;b]` which is a rank error
 - Mixed-type lists crash `.j.j` — use `string each x` as universal fallback
 - Function results (type >= 100h): return `string fn` for source representation
 - Use `value` (not `reval`) for local single-user workbench; document this assumption
+- **`.j.k` returns symbol keys** — `{"action":"eval"}` parses to `` `action!enlist "eval" ``; index with `` req`expr ``, not `req "expr"` (which causes `'type`)
 
 **Tests:** known expressions, table results with row limit, error results, empty results, function results
 

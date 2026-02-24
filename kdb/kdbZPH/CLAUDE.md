@@ -9,9 +9,9 @@ kdbZPH is a **self-hosted KDB+ workbench** served directly from a running q proc
 ## Current State
 
 - **Branch:** `feature/zph-handler`
-- **Iterations complete:** 1–5 (HTTP handler, parser, router, static server, POST/JSON layer)
-- **Next:** Iteration 6 — q REPL endpoint
-- **Tests:** `q test/test_zph.q` — 64 passing
+- **Iterations complete:** 1–6 (HTTP handler, parser, router, static server, POST/JSON layer, REPL)
+- **Next:** Iteration 7 — Data Explorer
+- **Tests:** `q test/test_zph.q` — 76 passing
 
 ## Key Files
 
