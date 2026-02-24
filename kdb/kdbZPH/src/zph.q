@@ -13,9 +13,10 @@ httpResp:{[status;ctype;body]
   statusLine:"HTTP/1.1 ",status,"\r\n";
   ctypeLine:"Content-Type: ",ctype,"\r\n";
   clengthLine:"Content-Length: ",(string count body),"\r\n";
+  corsLine:"Access-Control-Allow-Origin: *\r\n";
   connLine:"Connection: close\r\n";
   blank:"\r\n";
-  statusLine,ctypeLine,clengthLine,connLine,blank,body
+  statusLine,ctypeLine,clengthLine,corsLine,connLine,blank,body
  }
 
 / parseQS: parse a query string into a dictionary
@@ -93,30 +94,6 @@ parseReq:{[raw]
 / Iteration 3: HTML page builder, object browser, router
 / .
 
-/ htmlPage: wrap body content in a full HTML document
-/ args:
-/   ttl         - page title string
-/   bodyContent - HTML string for the <main> element
-/ returns: full HTML document string
-htmlPage:{[ttl;bodyContent]
-  raze(
-    "<!DOCTYPE html>";
-    "<html lang='en'>";
-    "<head>";
-    "<meta charset='utf-8'>";
-    "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    "<title>",ttl,"</title>";
-    "<link rel='stylesheet' href='/static/style.css'>";
-    "</head>";
-    "<body>";
-    "<header class='site-header'><h1>kdb+ process browser</h1></header>";
-    "<main class='site-main'>",bodyContent,"</main>";
-    "<footer class='site-footer'>kdb+ process browser</footer>";
-    "<script src='/static/app.js'></script>";
-    "</body>";
-    "</html>"
-  )
- }
 
 / htmlProcessInfo: build the process info card
 / returns: HTML string for the process info section
@@ -315,20 +292,18 @@ parsePost:{[x]
   `body`headers!(body;hdrs)
  }
 
-/ jsonResp: wrap data in HTTP 200 application/json response with CORS header
+/ jsonResp: wrap data in HTTP 200 application/json response
 / arg: data - any q value serialisable by .j.j
 / returns: full HTTP response string
 jsonResp:{[data]
-  body:.j.j data;
-  "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ",(string count body),"\r\nConnection: close\r\n\r\n",body
+  httpResp["200 OK"; "application/json; charset=utf-8"; .j.j data]
  }
 
-/ jsonErr: return HTTP 400 response with JSON error body and CORS header
+/ jsonErr: return HTTP 400 response with JSON error body
 / arg: msg - error message string
 / returns: full HTTP 400 response string
 jsonErr:{[msg]
-  body:.j.j enlist[`error]!enlist msg;
-  "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ",(string count body),"\r\nConnection: close\r\n\r\n",body
+  httpResp["400 Bad Request"; "application/json; charset=utf-8"; .j.j enlist[`error]!enlist msg]
  }
 
 / handlePing: respond to ping action with status ok and current timestamp
@@ -502,8 +477,11 @@ handleExplorer:{[req]
 / wire the /explorer route
 routes:routes , (enlist`$"/explorer")!enlist handleExplorer
 
-/ update htmlPage to include nav links between pages
-/ redefine htmlPage to add nav after <h1>
+/ htmlPage: wrap body content in a full HTML document with nav
+/ args:
+/   ttl         - page title string
+/   bodyContent - HTML string for the <main> element
+/ returns: full HTML document string
 htmlPage:{[ttl;bodyContent]
   nav:"<nav class='site-nav'><a href='/'>Dashboard</a> <a href='/explorer'>Explorer</a> <a href='/repl'>REPL</a></nav>";
   raze(
