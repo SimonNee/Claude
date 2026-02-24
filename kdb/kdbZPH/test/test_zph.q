@@ -424,6 +424,57 @@ assert["wsEval binary frame response contains error"; strContains[ws94;"error"]]
 / Test 96: .z.ws is defined as a lambda (type 100h)
 assert[".z.ws is defined"; 100h=type .z.ws]
 
+/ .
+/ Iteration 10 tests — Visualization (toPlotData + handlePlot)
+/ .
+
+/ Test 97: toPlotData on a typed vector returns a table of traces (type 98h)
+/ enlist dict promotes to a table in q; .j.j serialises it as [{...}] for Plotly
+tp97:toPlotData 1 2 3f
+assert["toPlotData vector returns a table of traces"; 98h=type tp97]
+
+/ Test 98: toPlotData vector returns exactly 1 trace
+assert["toPlotData vector returns 1 trace"; 1=count tp97]
+
+/ Test 99: toPlotData vector trace has y key
+assert["toPlotData vector trace has y key"; `y in key first tp97]
+
+/ Test 100: toPlotData 2-col table returns 1 trace
+t100:([]x:1 2 3f;y:10 20 30f)
+tp100:toPlotData t100
+assert["toPlotData 2-col table returns 1 trace"; 1=count tp100]
+
+/ Test 101: toPlotData multi-col table returns one trace per y col
+t101:([]x:1 2 3f;y1:10 20 30f;y2:100 200 300f)
+tp101:toPlotData t101
+assert["toPlotData multi-col table returns 2 traces"; 2=count tp101]
+
+/ Test 102: toPlotData dict with x and y keys returns 1 trace
+tp102:toPlotData `x`y!(1 2 3f;10 20 30f)
+assert["toPlotData dict returns 1 trace"; 1=count tp102]
+
+/ Test 103: toPlotData 2-element list returns 1 trace
+tp103:toPlotData (1 2 3f;10 20 30f)
+assert["toPlotData 2-element list returns 1 trace"; 1=count tp103]
+
+/ Test 104: toPlotData atom signals an error (trapped as string)
+tp104:@[toPlotData; 42f; {[e] e}]
+assert["toPlotData atom signals error (returns string)"; 10h=type tp104]
+
+/ Test 105: POST plot with a valid table expression returns HTTP 200
+t105:.z.pp enlist "{\"action\":\"plot\",\"expr\":\"([]x:1 2 3f;y:10 20 30f)\"}"
+assert["POST plot valid expr returns HTTP 200"; strContains[t105;"HTTP/1.1 200"]]
+
+/ Test 106: POST plot response contains x key
+assert["POST plot response contains x"; strContains[t105;"\"x\""]]
+
+/ Test 107: GET /graph returns HTTP 200
+t107:.z.ph("/graph"; (enlist`Host)!enlist"localhost")
+assert["GET /graph returns HTTP 200"; strContains[t107;"HTTP/1.1 200"]]
+
+/ Test 108: /graph response contains plotly-chart div
+assert["/graph response contains plotly-chart"; strContains[t107;"plotly-chart"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

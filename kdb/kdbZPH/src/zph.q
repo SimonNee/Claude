@@ -494,7 +494,7 @@ routes:routes , (enlist`$"/explorer")!enlist handleExplorer
 /   bodyContent - HTML string for the <main> element
 / returns: full HTML document string
 htmlPage:{[ttl;bodyContent]
-  nav:"<nav class='site-nav'><a href='/'>Dashboard</a> <a href='/explorer'>Explorer</a> <a href='/repl'>REPL</a></nav>";
+  nav:"<nav class='site-nav'><a href='/'>Dashboard</a> <a href='/explorer'>Explorer</a> <a href='/repl'>REPL</a> <a href='/graph'>Graph</a></nav>";
   raze(
     "<!DOCTYPE html>";
     "<html lang='en'>";
@@ -508,8 +508,10 @@ htmlPage:{[ttl;bodyContent]
     "<header class='site-header'><h1>kdb+ process browser</h1>",nav,"</header>";
     "<main class='site-main'>",bodyContent,"</main>";
     "<footer class='site-footer'>kdb+ process browser</footer>";
+    "<script src='https://cdn.plot.ly/plotly-latest.min.js'></script>";
     "<script src='/static/app.js'></script>";
     "<script type='module' src='/static/editor.js'></script>";
+    "<script src='/static/graph.js'></script>";
     "</body>";
     "</html>"
   )
@@ -559,3 +561,109 @@ wsEval:{[msgStr]
 
 -1 "zph loaded: iteration 8 — WebSocket REPL";
 -1 "zph loaded: iteration 9 — code editor";
+
+/ .
+/ Iteration 10: Visualization (Plotly.js)
+/ .
+
+/ temporalTypes: q type chars that need string serialisation for Plotly
+/ Plotly.js parses ISO date strings; q temporal string forms are close enough
+/ except timestamps (type p = 12h) which need cast to datetime first
+temporalTypes:"pdztnuv"
+
+/ plotSerialise: convert a column vector to a JSON-safe form for Plotly
+/ temporal columns -> string list; all others pass through unchanged
+plotSerialise:{[col]
+  tc:abs type col;
+  tchar:.Q.t tc;
+  $[tchar in temporalTypes;
+    $[tc=12h; string`datetime$col; string col];
+    col]
+ }
+
+/ plotTrace: build a single Plotly trace dict
+/ args: xv - x values; yv - y values; nm - trace name string
+plotTrace:{[xv;yv;nm]
+  `x`y`name!(plotSerialise xv; plotSerialise yv; nm)
+ }
+
+/ toPlotData: normalise a q value to a list of Plotly trace dicts
+/ Supported: typed vector, table, keyed table, dict of lists, 2-element list
+/ Returns: list of dicts with keys `x`y`name (one dict per trace)
+/ Signals an error for unsupported or ambiguous input types
+toPlotData:{[x]
+  t:type x;
+  / atoms: reject
+  if[t<0h; '"toPlotData: atom — wrap in a list"];
+  / typed uniform vector (types 1-19): single y series, x = 0,1,2,...
+  if[(t>0h) and t<20h;
+    :enlist plotTrace[til count x; x; "y"]
+   ];
+  / keyed table: unkey first, then fall into table branch
+  / nested if — q does not short-circuit `and`, so key x must not be
+  / evaluated when t<>99h (key on a plain table raises 'type)
+  if[t=99h;
+    if[98h=type key x; x:0!x; t:98h]
+   ];
+  / table: first col = x axis; each remaining col = separate trace
+  if[t=98h;
+    cs:cols x;
+    if[2>count cs; '"toPlotData: table needs at least 2 columns"];
+    xv:x cs 0;
+    ycols:1_cs;
+    :{[tbl;xv;yc] plotTrace[xv; tbl yc; string yc]}[x;xv] each ycols
+   ];
+  / plain dict (type 99h, key is not a table): column-oriented, 2+ keys required
+  if[t=99h;
+    ks:key x;
+    if[2>count ks; '"toPlotData: dict needs at least 2 keys"];
+    lens:count each value x;
+    if[1<count distinct lens; '"toPlotData: dict values must be equal length"];
+    xk:$[`x in ks; `x; first ks];
+    ycols:ks except xk;
+    xv:x xk;
+    :{[d;xv;yk] plotTrace[xv; d yk; string yk]}[x;xv] each ycols
+   ];
+  / 2-element general list: positional (xvec; yvec)
+  if[t=0h;
+    if[2<>count x; '"toPlotData: list must have exactly 2 elements"];
+    if[not all (type each x) in `short$1+til 19; '"toPlotData: elements must be typed vectors"];
+    if[(count x 0)<>count x 1; '"toPlotData: x and y must be equal length"];
+    :enlist plotTrace[x 0; x 1; "y"]
+   ];
+  '"toPlotData: unsupported type"
+ }
+
+/ handlePlot: POST action "plot" — eval expr, normalise to traces, return JSON
+/ req: parsed JSON dict with key "expr" (q expression string)
+/ returns: jsonResp with list of Plotly trace dicts, or jsonErr on failure
+handlePlot:{[req]
+  exprStr:req`expr;
+  res:evalExpr exprStr;
+  if[not first res; :jsonErr last res];
+  traces:@[toPlotData; last res; {[e] e}];
+  $[10h=type traces;
+    jsonErr traces;
+    jsonResp traces
+   ]
+ }
+
+/ add plot to postRoutes
+postRoutes:(`ping`eval`plot)!(handlePing;handleEval;handlePlot)
+
+/ htmlGraph: build the graph page section
+htmlGraph:{[]
+  controls:"<div class='graph-controls'><label for='graph-expr'>Expression:</label><textarea id='graph-expr' rows='3' placeholder='([]x:til 10;y:til 10)'></textarea><div class='graph-row'><label for='chart-type'>Chart:</label><select id='chart-type'><option value='line'>Line</option><option value='bar'>Bar</option><option value='scatter'>Scatter</option></select><button id='plot-btn'>Plot</button><span class='repl-hint'>Ctrl+Enter to plot</span></div></div>";
+  chartArea:"<div class='plotly-wrap'><div id='plotly-chart'></div></div>";
+  "<section id='graph' class='card'><h2>Graph</h2>",controls,chartArea,"</section>"
+ }
+
+/ handleGraph: serve the graph page
+handleGraph:{[req]
+  httpResp["200 OK";"text/html; charset=utf-8";htmlPage["Graph";htmlGraph[]]]
+ }
+
+/ wire the /graph route
+routes:routes , (enlist`$"/graph")!enlist handleGraph
+
+-1 "zph loaded: iteration 10 — visualization";
