@@ -4,7 +4,7 @@
 
 import { EditorView, keymap, highlightActiveLine } from 'https://esm.sh/@codemirror/view@6';
 import { EditorState } from 'https://esm.sh/@codemirror/state@6';
-import { defaultKeymap, historyKeymap, history } from 'https://esm.sh/@codemirror/commands@6';
+import { defaultKeymap, historyKeymap, history, insertNewline } from 'https://esm.sh/@codemirror/commands@6';
 import { syntaxHighlighting, defaultHighlightStyle } from 'https://esm.sh/@codemirror/language@6';
 
 var hostEl = document.getElementById('editor');
@@ -69,12 +69,9 @@ if (!hostEl) {
       syntaxHighlighting(defaultHighlightStyle),
       highlightActiveLine(),
       keymap.of([
-        // Enter alone submits; Shift-Enter inserts a literal newline
+        // Shift-Enter first — more specific binding must precede plain Enter
+        { key: 'Shift-Enter', run: insertNewline },
         { key: 'Enter', run: submitExpr },
-        { key: 'Shift-Enter', run: function (view) {
-          view.dispatch(view.state.replaceSelection('\n'));
-          return true;
-        }},
         // ArrowUp/Down cycle through localStorage history
         { key: 'ArrowUp', run: historyUp },
         { key: 'ArrowDown', run: historyDown },
