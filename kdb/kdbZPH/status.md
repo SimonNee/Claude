@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 4 complete — **Next: Iteration 5 (POST Handler + JSON Layer)**
+**Current Iteration:** 5 complete — **Next: Iteration 6 (q REPL Endpoint)**
 
 ## Completed Iterations
 
@@ -13,15 +13,16 @@
 | 2 | Request parsing (`parseQS`, `parseHdr`, `parseReq`, `buildReq`) | ✓ Complete |
 | 3 | Router + landing page (`routes`, `dispatch`, `htmlPage`, `htmlProcessInfo`, `htmlObjectBrowser`) | ✓ Complete |
 | 4 | Static file server (`mimeType`, `handleStatic`, prefix routing, CSS extraction) | ✓ Complete |
+| 5 | POST handler + JSON layer (`parsePost`, `jsonResp`, `jsonErr`, `postRoutes`, `.z.pp`, `handlePing`) | ✓ Complete |
 
-**Tests:** 53 passing in `test/test_zph.q`
+**Tests:** 64 passing in `test/test_zph.q`
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `src/zph.q` | All implementation — HTTP handler, parser, router, HTML builders, static server |
-| `test/test_zph.q` | Test suite — 53 tests (assertions, strContains helper) |
+| `src/zph.q` | All implementation — HTTP handler, parser, router, HTML builders, static server, POST handler |
+| `test/test_zph.q` | Test suite — 64 tests (assertions, strContains helper) |
 | `static/style.css` | Site stylesheet (extracted from `htmlPage` in Iteration 4) |
 | `cfg/` | Empty — reserved for config (Iteration 11) |
 | `project.md` | Full project plan and iteration roadmap |
@@ -29,16 +30,19 @@
 
 ## Next Steps
 
-### Iteration 5: POST Handler + JSON Layer
-1. Add `.z.pp[x]` entry point — parses body, dispatches on `action` key
-2. Add `parsePost[x]` — extracts body string and headers from `.z.pp` argument
-3. Add `jsonResp[data]` — wraps `.j.j data` in HTTP 200 `application/json` response
-4. Add `jsonErr[msg]` — `{"error":"..."}` with HTTP 400
-5. Add `postRoutes` dict — keyed on action symbols
-6. First action: `"ping"` returns `{"status":"ok","ts":"<.z.p>"}`
-7. Add tests — ping round-trip, malformed JSON handled, CORS header present
+### Iteration 6: q REPL Endpoint (Core Feature)
+1. Add `evalExpr[exprStr]` — safe eval returning `(ok; result)` pair via `@[{(1b;value x)};...]`
+2. Add `qToJson[x]` — converts any q result to JSON-serializable form with type-aware fallbacks
+3. Add `handleEval[req]` — POST action `"eval"`: takes `expr` string, returns result as JSON
+4. Add `"eval"` to `postRoutes`
+5. Row limit enforcement (default 1000 rows) before serialization
+6. Minimal browser REPL in `static/app.js`: textarea + pre, `fetch()` POST to eval, display result
 
-**Key pitfall:** `.z.pp` does NOT receive the URL path — route via `"action"` key in JSON body only.
+**Key pitfalls:**
+- Pass expression as **string** to `value` — `value "1+1"` executes q; `` value `sym `` looks up a variable
+- Mixed-type lists crash `.j.j` — use `string each x` as universal fallback
+- For tables: use column-oriented JSON (`flip` then `.j.j`) — compact and better for plotting
+- Function results (type >= 100h): return `string fn` for source representation
 
 ## Bug History
 
@@ -48,3 +52,5 @@
 | 2 | 0 | 0 | — |
 | 3 | 0 | 0 | Browser compatibility fix applied (commit 01e547e) |
 | 4 | 0 | 0 | — |
+| 5 (object browser) | 1 | 1 | `key\`` returns namespace names only — fixed with `system "f"`/`system "v"`; `ss` treats `*` as wildcard in test needle |
+| 5 (POST handler) | 0 | 1 | Test needle `"Access-Control-Allow-Origin: *"` crashed `ss` due to wildcard — trimmed to `"Access-Control-Allow-Origin"` |
