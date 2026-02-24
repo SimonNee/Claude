@@ -3,7 +3,7 @@
 ## Current State
 
 **Branch:** `feature/zph-handler`
-**Current Iteration:** 8 complete — **Next: Iteration 9 (Code Editor)**
+**Current Iteration:** 10 complete — **Next: Iteration 11 (Configuration + Polish)**
 
 ## Completed Iterations
 
@@ -18,8 +18,9 @@
 | 7 | Data explorer (`apiTables`, `apiMeta`, `apiData`, `/explorer` route, nav links) | ✓ Complete |
 | 8 | WebSocket REPL (`wsEval`, `.z.ws`, WS status badge, auto-reconnect) | ✓ Complete |
 | 9 | Code editor (`editor.js`, CodeMirror 6 via CDN, history, interpreter-style keybindings) | ✓ Complete |
+| 10 | Visualization (`toPlotData`, `handlePlot`, `htmlGraph`, `/graph` route, Plotly.js CDN) | ✓ Complete |
 
-**Tests:** 99 passing in `test/test_zph.q`
+**Tests:** 111 passing in `test/test_zph.q`
 
 ## Pre-Iteration-8 Refactor (committed separately)
 - CORS header moved into `httpResp` — single source of truth for all responses
@@ -35,17 +36,18 @@
 | `test/test_zph.q` | Test suite — 96 tests |
 | `static/style.css` | Site stylesheet |
 | `static/app.js` | Browser REPL (WebSocket) + data explorer frontend |
+| `static/graph.js` | Plotly.js graph page frontend |
 | `cfg/` | Empty — reserved for config (Iteration 11) |
 | `project.md` | Full project plan and iteration roadmap |
 | `status.md` | This file |
 
 ## Next Steps
 
-### Iteration 10: Visualization (Plotly.js)
-1. Add `GET /graph` route — page with chart area and controls
-2. Add POST action `"plot"` — evals expression, returns column-oriented JSON
-3. `toPlotData[tbl;chartType]` — converts q table to Plotly trace format
-4. Plotly.js from CDN; `Plotly.newPlot()` on receipt
+### Iteration 11: Configuration + Polish
+1. `cfg/config.q` — row limits, allowed namespaces, history size with defaults
+2. `loadCfg[]` — loads config with fallback defaults
+3. Multi-namespace object browser (live refresh deferred here too)
+4. `GET /api/csv?table=X&n=1000` — table as CSV download
 
 ## Known Deferred Items
 
@@ -67,3 +69,4 @@
 | 5 (POST handler) | 0 | 1 | Test needle `*` crashed `ss` |
 | 6 | 2 | 0 | `min[a;b]` rank error; `.j.k` returns symbol keys |
 | 7 | 2 | 0 | `meta` returns keyed table (`'nyi` on flip); `n#tbl` recycles rows |
+| 10 | 3 | 1 | `enlist dict` → 98h not 0h; `key plain_table` raises `'type`; spurious `ycols` in `each` branch |
