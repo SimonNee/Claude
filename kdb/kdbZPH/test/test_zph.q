@@ -288,6 +288,51 @@ assert["unknown action returns HTTP 400"; strContains[unknownResp;"HTTP/1.1 400"
 / Test 64: unknown action response contains "error"
 assert["unknown action body contains error"; strContains[unknownResp;"error"]]
 
+/ .
+/ Iteration 6 tests — q REPL endpoint
+/ .
+
+/ Test 65: evalExpr returns success tuple for valid expression
+res:evalExpr "1+1"
+assert["evalExpr 1+1 returns success (first is 1b)"; 1b~first res]
+
+/ Test 66: evalExpr returns correct value for 1+1
+assert["evalExpr 1+1 result is 2"; 2~last res]
+
+/ Test 67: evalExpr returns failure tuple for bad expression
+bad:evalExpr "bad_variable_that_doesnt_exist"
+assert["evalExpr bad expr returns failure (first is 0b)"; 0b~first bad]
+
+/ Test 68: evalExpr error result is a string (type 10h)
+assert["evalExpr error is a string"; 10h=type last bad]
+
+/ Test 69: qToJson on an atom returns a string
+assert["qToJson atom returns string"; 10h=type qToJson 42]
+
+/ Test 70: qToJson on a simple list returns a string
+assert["qToJson simple list returns string"; 10h=type qToJson 1 2 3]
+
+/ Test 71: qToJson on a table returns a string
+t71:([]a:1 2 3;b:4 5 6)
+assert["qToJson table returns string"; 10h=type qToJson t71]
+
+/ Test 72: qToJson table output is column-oriented (contains column name "a")
+assert["qToJson table output is column-oriented (contains a)"; strContains[qToJson t71;"\"a\""]]
+
+/ Test 73: qToJson on a function returns a string (source representation)
+assert["qToJson function returns string"; 10h=type qToJson {x+1}]
+
+/ Test 74: POST eval "1+1" returns HTTP 200
+er:.z.pp enlist "{\"action\":\"eval\",\"expr\":\"1+1\"}"
+assert["POST eval 1+1 returns HTTP 200"; strContains[er;"HTTP/1.1 200"]]
+
+/ Test 75: POST eval "1+1" response contains "ok"
+assert["POST eval 1+1 response contains ok"; strContains[er;"ok"]]
+
+/ Test 76: POST eval with bad expression returns HTTP 200 with ok:false
+be:.z.pp enlist "{\"action\":\"eval\",\"expr\":\"badvar123\"}"
+assert["POST eval bad expr returns HTTP 200 with ok false"; strContains[be;"false"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

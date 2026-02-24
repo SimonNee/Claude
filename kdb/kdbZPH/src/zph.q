@@ -112,6 +112,7 @@ htmlPage:{[ttl;bodyContent]
     "<header class='site-header'><h1>kdb+ process browser</h1></header>";
     "<main class='site-main'>",bodyContent,"</main>";
     "<footer class='site-footer'>kdb+ process browser</footer>";
+    "<script src='/static/app.js'></script>";
     "</body>";
     "</html>"
   )
@@ -206,9 +207,16 @@ html404:{[pth]
   "<section id='not-found' class='card'><h2>404 &mdash; Not Found</h2><p>No handler for path: <code>",pth,"</code></p><p><a href='/'>Return to dashboard</a></p></section>"
  }
 
+/ htmlRepl: build the REPL section card
+/ returns: HTML string for the REPL section
+htmlRepl:{[]
+  "<section id='repl' class='card'><h2>q REPL</h2><div class='repl-wrap'><textarea id='expr' rows='3' placeholder='1+1'></textarea><div class='repl-controls'><button id='run'>Run</button><span class='repl-hint'>Ctrl+Enter to run</span></div><pre id='output' class='repl-output'></pre></div></section>"
+ }
+
 / handleRoot: serve the process browser landing page
 handleRoot:{[req]
-  httpResp["200 OK";"text/html; charset=utf-8";htmlPage["kdb+ process browser";htmlProcessInfo[],htmlObjectBrowser[]]]
+  body:htmlProcessInfo[],htmlRepl[],htmlObjectBrowser[];
+  httpResp["200 OK";"text/html; charset=utf-8";htmlPage["kdb+ process browser";body]]
  }
 
 / handle404: serve the 404 not-found page
@@ -350,4 +358,62 @@ postRoutes:(enlist `ping)!enlist handlePing
    }; enlist x; {[e] jsonErr e}]
  }
 
--1 "zph loaded: iteration 5 — POST handler";
+/ .
+/ Iteration 6: q REPL endpoint
+/ .
+
+/ evalExpr: safely evaluate a q expression string
+/ arg: exprStr - q expression as a string (type 10h)
+/ returns: (1b; result) on success, (0b; errorString) on failure
+/ NOTE: uses value (not reval) — local single-user workbench assumption
+evalExpr:{[exprStr]
+  @[{(1b;value x)}; exprStr; {[e](0b;e)}]
+ }
+
+/ qToJson: convert any q result to a JSON string
+/ Handles all q types with appropriate fallbacks:
+/   tables (98h)          -> column-oriented JSON via flip + .j.j, 1000-row limit
+/   keyed tables (99h)    -> unkey via value, then treat as table
+/   atoms/simple lists    -> .j.j directly (types < 20h, not mixed)
+/   functions/lambdas     -> string for source representation (type >= 100h)
+/   mixed lists / other   -> string each as universal fallback
+/ arg: x - any q value
+/ returns: JSON string (type 10h)
+qToJson:{[x]
+  tp:type x;
+  / keyed table: 99h where value is a table (98h)
+  if[99h=tp;
+    if[98h=type value x; :qToJson value x]
+   ];
+  / plain table
+  if[98h=tp;
+    limited:(1000&count x)#x;
+    :.j.j flip limited
+   ];
+  / functions and lambdas: type >= 100h
+  if[tp>=100h; :string x];
+  / atoms and uniform lists: type in -19h to 19h (but not 0h mixed)
+  / type 0h is mixed list — falls through to fallback
+  if[(tp within (-19;19)) and not 0h=tp; :.j.j x];
+  / fallback: mixed lists, dicts with mixed values, anything else
+  .j.j string each x
+ }
+
+/ handleEval: POST action "eval" — evaluate a q expression and return result
+/ arg: req - parsed JSON dict with key "expr" (q expression string)
+/ returns: HTTP 200 JSON response with ok:true+result or ok:false+error
+handleEval:{[req]
+  exprStr:req`expr;
+  res:evalExpr exprStr;
+  ok:first res;
+  payload:$[ok;
+    `ok`result!(1b; qToJson last res);
+    `ok`error!(0b; last res)
+   ];
+  jsonResp payload
+ }
+
+/ add eval to postRoutes
+postRoutes:(`ping`eval)!(handlePing;handleEval)
+
+-1 "zph loaded: iteration 6 — REPL endpoint";
