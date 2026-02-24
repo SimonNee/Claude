@@ -244,6 +244,16 @@ assert["GET / head links to /static/style.css"; strContains[rootResp2;"/static/s
 / Test 53: GET / head does NOT contain inline <style> tag
 assert["GET / head has no inline <style> tag"; not strContains[rootResp2;"<style>"]]
 
+/ .
+/ Object browser variable display tests
+/ .
+
+/ set a known test variable, then re-render
+testVarZPH:999
+obOut3:htmlObjectBrowser[]
+assert["htmlObjectBrowser shows plain variable name"; strContains[obOut3;"testVarZPH"]]
+assert["htmlObjectBrowser shows variable type number"; strContains[obOut3;"-7"]]
+
 / Summary
 -1 "";
 -1 "Results: ",(string pass)," passed, ",(string fail)," failed";

@@ -135,17 +135,8 @@ htmlProcessInfo:{[]
   heapVal:string .Q.w[][`heap];
   peakVal:string .Q.w[][`peak];
   tblCount:string count tables[];
-  / count functions: symbols in key`. where type of value >= 100h,
-  / excluding tables, views, and system namespace prefixes
-  allNames:key`;
-  sysNs:`q`Q`z`h`j`o`O;
-  allNames:allNames except sysNs;
-  tblNames:tables[];
-  vwNames:views[];
-  / filter to lambdas/projections/operators (type >= 100h)
-  fnNames:allNames where 100h<=type each @[value;;(::)] each allNames;
-  / exclude tables and views from the function list
-  fnNames:fnNames except tblNames,vwNames;
+  / count user-defined functions via system "f"
+  fnNames:system "f";
   fnCount:string count fnNames;
   / build rows
   mkRow:{[lbl;val] "<dt>",lbl,"</dt><dd>",val,"</dd>"};
@@ -167,13 +158,9 @@ htmlProcessInfo:{[]
 htmlObjectBrowser:{[]
   tblNames:tables[];
   vwNames:views[];
-  / all names in default namespace, excluding system namespace prefixes
-  allNames:key`;
-  sysNs:`q`Q`z`h`j`o`O;
-  allNames:allNames except sysNs;
-  / function names: type >= 100h, excluding tables and views
-  fnNames:allNames where 100h<=type each @[value;;(::)] each allNames;
-  fnNames:fnNames except tblNames,vwNames;
+  / use system "f" and system "v" to enumerate user-defined objects
+  fnNames:(system "f") except tblNames,vwNames;
+  varNames:(system "v") except tblNames,vwNames;
   / build one table row per object
   / tables: show row count and column count
   tblRows:raze{[nm]
@@ -190,8 +177,17 @@ htmlObjectBrowser:{[]
   fnRows:raze{[nm]
     "<tr><td><code>",string[nm],"</code></td><td>function</td><td>-</td><td>-</td></tr>"
    }each fnNames;
+  / variables: show type number and count (or "-" for atoms)
+  varRows:raze{[nm]
+    v:@[value;nm;{(::)}];
+    if[(::)~v; :""];
+    t:type v;
+    tstr:string t;
+    rc:$[0>t; "-"; string count v];
+    "<tr><td><code>",string[nm],"</code></td><td>",tstr,"</td><td>",rc,"</td><td>-</td></tr>"
+   }each varNames;
   / combine all rows
-  allRows:tblRows,vwRows,fnRows;
+  allRows:tblRows,vwRows,fnRows,varRows;
   / if nothing exists, show placeholder row
   bodyRows:$[0=count allRows;
     "<tr><td colspan='4'>No objects found</td></tr>";
