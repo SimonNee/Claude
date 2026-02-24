@@ -337,12 +337,23 @@ postRoutes:(enlist `ping)!enlist handlePing
 / Iteration 6: q REPL endpoint
 / .
 
-/ evalExpr: safely evaluate a q expression string
-/ arg: exprStr - q expression as a string (type 10h)
+/ evalExpr: safely evaluate a q expression string (single or multi-line)
+/ arg: exprStr - q expression as a string (type 10h); newlines separate statements
 / returns: (1b; result) on success, (0b; errorString) on failure
-/ NOTE: uses value (not reval) — local single-user workbench assumption
+/ Each non-empty line is evaluated independently in sequence, matching
+/ interactive q behaviour — no semicolons required between lines.
+/ NOTE: multi-line continuations (expression split across lines) are not
+/ supported — write them on one line. uses value (not reval) — single-user.
 evalExpr:{[exprStr]
-  @[{(1b;value x)}; exprStr; {[e](0b;e)}]
+  lns:"\n" vs exprStr;
+  lns:lns where 0<count each lns;
+  if[0=count lns; :(1b;(::))];
+  if[1=count lns; :@[{(1b;value x)}; first lns; {[e](0b;e)}]];
+  / eval each line in order; stop and return first error
+  res:{[ln] @[{(1b;value x)};ln;{[e](0b;e)}]} each lns;
+  errs:where not res[;0];
+  if[0<count errs; :res first errs];
+  last res
  }
 
 / qToJson: convert any q result to a JSON string

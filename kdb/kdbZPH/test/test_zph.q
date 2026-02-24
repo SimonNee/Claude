@@ -306,6 +306,15 @@ assert["evalExpr bad expr returns failure (first is 0b)"; 0b~first bad]
 / Test 68: evalExpr error result is a string (type 10h)
 assert["evalExpr error is a string"; 10h=type last bad]
 
+/ Test 68b: evalExpr multi-line — assignments persist, last result returned
+ml:evalExpr "mlA:10\nmlB:20\nmlA+mlB"
+assert["evalExpr multi-line returns success"; 1b~first ml]
+assert["evalExpr multi-line result is 30"; 30~last ml]
+
+/ Test 68c: evalExpr multi-line — error on second line returns failure
+mle:evalExpr "mlC:1\nbadvar_zph_ml\nmlC+1"
+assert["evalExpr multi-line error returns failure"; 0b~first mle]
+
 / Test 69: qToJson on an atom returns a string
 assert["qToJson atom returns string"; 10h=type qToJson 42]
 
