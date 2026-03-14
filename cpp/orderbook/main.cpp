@@ -1,7 +1,10 @@
 #include "orderbook.h"
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
+#include <string>
 
 static void printBook(const OrderBook& book) {
     std::cout << std::fixed << std::setprecision(2);
@@ -35,6 +38,46 @@ int main() {
     std::cout << "\nAdded bid id=" << id << " @ 98.00 qty 50, then cancel it:\n";
     book.cancelOrder(id);
     printBook(book);
+
+    // --- CSV load test ---
+    std::cout << "\n=== CSV Load Test ===\n\n";
+
+    std::ifstream csv("data/orders.csv");
+    if (!csv.is_open()) {
+        std::cerr << "Could not open data/orders.csv\n";
+        return 1;
+    }
+
+    OrderBook csvBook;
+    std::string line;
+    std::getline(csv, line);  // skip header
+
+    int loaded = 0;
+    int malformed = 0;
+
+    while (std::getline(csv, line)) {
+        std::istringstream ss(line);
+        std::string priceStr, qtyStr, sideStr;
+
+        if (!std::getline(ss, priceStr, ',') ||
+            !std::getline(ss, qtyStr,   ',') ||
+            !std::getline(ss, sideStr,  ',')) {
+            ++malformed;
+            continue;
+        }
+
+        Side side;
+        if      (sideStr == "B") side = Side::Buy;
+        else if (sideStr == "S") side = Side::Sell;
+        else { ++malformed; continue; }
+
+        csvBook.addOrder(side, std::stod(priceStr), std::stod(qtyStr));
+        ++loaded;
+    }
+
+    std::cout << "Rows loaded  : " << loaded    << "\n";
+    std::cout << "Malformed    : " << malformed  << "\n";
+    printBook(csvBook);
 
     return 0;
 }
