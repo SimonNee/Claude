@@ -165,25 +165,51 @@ Iteration 1 code and recommends trade-offs before changes are made.
 
 ## Completed Work
 
+### agentDuality ✓ COMPLETE (`584e10f`, `da6eff9`, `1713c91`)
+- **Agent definition**: `.claude/agents/agentDuality.md`
+  - 5-verdict set: Recommend / Do not recommend / Retain / Conditional / Measure first
+  - Step 7: mandatory envelope question before any O(n) verdict
+- **Knowledge base**: `cpp/duality-kb/` (6 files)
+  - Pitfall 13: "know your envelope — you can't measure unless you know how long your ruler is"
+  - Phrasebook includes envelope question section in `tradeoffs.md`
+
 ### Iteration 1 ✓ COMPLETE (`fa49a1f`)
 - Naive `std::map` + `std::deque` orderbook
 - 14/14 correctness tests passing
-- `main.cpp` smoke test driver
+- RDTSC baseline timing: **1,196 cycles/order** (null datum)
 
-### q Data Generator ✓ COMPLETE (`e1ed5e4`, `ac54771`)
-- `cpp/orderbook/data/gen_orders.q` — generates 1M synthetic limit orders as CSV
-  - Random price walk around mid 100.0, step ±0.05
-  - Exponential qty distribution (mean ~50, capped at 1000)
-  - 50/50 Buy/Sell, `f` suffix stripped post-save
-- `cpp/orderbook/data/schema.md` — contract between q generator and C++ consumer
-- CSV load validated in `main.cpp`: 1M rows, 0 malformed, final spread 0.04
+### q Data Generator — PARTIALLY UPDATED (bug blocking)
+- `gen_orders.q` updated to OU mean-reverting price walk (THETA=0.05, PRICE_BAND=2.50)
+- OU generation verified interactively: prices within [99.59, 100.43], 85 distinct levels
+- **BUG**: `{ssr[x;enlist"f";""]} each lines` hangs over 1M lines — too slow
+- CSV on disk still contains old free-random-walk data
+- **Fix**: replace `each` ssr with single-string ssr over entire file
+
+### Iteration 2 — STRUCTURALLY COMPLETE, benchmark blocked
+- All 3 changes applied: struct reorder (32→24 bytes), deque→vector+head, map→vector
+- 14/14 correctness tests pass
+- Timing regression: 1,196 → 1,727 cycles/order (+44%) — caused by unbounded p in old data
+- agentDuality final verdict: **Conditional** (vector wins p<500, map wins p>10,000)
+- Benchmark cannot be re-run until data generator bug is fixed
 
 ---
 
-## Next Steps
+## IMMEDIATE NEXT STEP ON RELOAD
 
-1. **Iteration 2** — user authorisation needed → agentDuality analysis + cache-friendly rewrite
-2. **Iteration 3** — benchmarks + first agentASM
-3. **Iteration 4** — SIMD scan
-4. **Iteration 5** — atomics
-5. (Parallel) Agree name for agentDuality, write its knowledge base and agent definition
+**Fix `gen_orders.q` f-suffix bug.** Replace:
+```q
+cleaned:{ssr[x;enlist"f";""]} each lines
+```
+With single-string approach (read whole file, one ssr, write back):
+```q
+content:raze {x,"\n"} each read0 outFile
+content:ssr[content;enlist"f";""]
+outFile 0: "\n" vs content
+```
+Or simpler — use `system "sed"` call after save.
+
+Then: regenerate CSV → re-run benchmark → validate Iteration 2 → proceed to Iteration 3.
+
+---
+
+## Iteration Roadmap (remaining)

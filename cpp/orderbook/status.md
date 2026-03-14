@@ -104,3 +104,48 @@ slower, we know immediately. No argument possible — the datum is the datum.
 - Deque 512-byte minimum chunk waste eliminated; inner matching loop becomes a sequential scan
 - Order struct reorder is zero-cost — 25% size reduction, better packing density
 - cancelOrder O(p*q) scan left unchanged until cancel rate is measured in Iteration 3
+
+---
+
+## Data Generator — BLOCKED: f-suffix stripping bug
+
+**Status**: BUG — generator hangs at f-suffix stripping step
+**Date**: 2026-03-14
+
+### What was done
+- agentDuality identified that synthetic free random walk data was producing unbounded
+  price levels (Pitfall 13 — know your envelope)
+- agentQ updated `gen_orders.q` to use an Ornstein-Uhlenbeck mean-reverting price walk
+- OU price generation tested interactively — works correctly:
+  - min: 99.59, max: 100.43, 85 distinct price levels — tight and bounded
+  - THETA=0.05, PRICE_BAND=2.50, prices stay within [97.50, 102.50]
+- agentDuality re-ran analysis with updated knowledge base (Pitfall 13, expanded
+  verdict set). Final verdict: **Conditional** — vector wins at p < 500, map wins
+  at p > 10,000. For any realistic orderbook p is well within the vector regime.
+
+### The bug
+The `{ssr[x;enlist"f";""]} each lines` step in gen_orders.q strips the trailing
+`f` suffix from q's float CSV output. Over 1M lines, `each` is extremely slow
+(possibly minutes) — the script appears to hang before completing. The CSV on
+disk still contains the OLD free random walk data.
+
+**The price generation itself is correct** — the bug is only in the post-save
+cleanup step.
+
+### Fix needed
+Replace the `each` line-by-line ssr approach with something faster. Options:
+1. Avoid the `f` suffix entirely by writing the table differently (e.g. using
+   `.h.htc` or explicit string formatting per column before saving)
+2. Use q's `ssr` on the entire file as a single string rather than line-by-line
+3. Use an external `sed` call to strip the suffix after saving
+4. Change the C++ consumer to handle the `f` suffix (rejected — keep C++ simple)
+
+**Recommended fix**: read the entire file as one string, do a single `ssr`, write
+back. This avoids the per-line `each` overhead entirely.
+
+### Next steps on reload
+1. Fix the f-suffix stripping bug in gen_orders.q
+2. Regenerate orders.csv with the OU walk
+3. Re-run the C++ benchmark and compare against the 1,196 cycles/order baseline
+4. If timing improves (expected), Iteration 2 is validated
+5. Proceed to Iteration 3 (bench.cpp + first agentASM)

@@ -7,21 +7,32 @@
 / Configuration — edit these values to change the generated data set
 / ---------------------------------------------------------------------------
 
-N:1000000       / number of orders to generate
-MID:100.0       / starting mid-price
-STEP:0.05       / maximum random price move per tick (controls volatility)
-/ Note: spread emerges naturally from the walk; it is not directly enforced
-QTY_SCALE:50.0  / mean quantity for the exponential draw (before clamping)
-QTY_MAX:1000.0  / hard cap on any single order quantity
+N:1000000        / number of orders to generate
+MID:100.0        / starting mid-price and OU reversion target
+STEP:0.05        / per-tick noise amplitude (tick size)
+THETA:0.05       / OU reversion strength — higher = tighter range around MID
+PRICE_BAND:2.50  / hard price band around MID (50 ticks * 0.05)
+QTY_SCALE:50.0   / mean quantity for the exponential draw (before clamping)
+QTY_MAX:1000.0   / hard cap on any single order quantity
 
 / ---------------------------------------------------------------------------
 / Price generation
 / ---------------------------------------------------------------------------
-/ Random walk: draw N uniform values on [-STEP, +STEP], accumulate with sums.
-/ Round to 2 decimal places via the integer trick: round(x, 2) = int(x*100)/100.
+/ Ornstein-Uhlenbeck mean-reverting price walk.
+/ Each step: new_price = prev + (-THETA * (prev - MID)) + (STEP * noise)
+/ where noise ~ Uniform[-1, +1].
+/
+/ ouStep is a 2-arg function suitable for seeded scan (\):
+/   ouStep[prev; n] returns the next price given previous price and noise n.
+/ f\[seed; list] applies f left-to-right, seeded with MID, producing N prices.
+/
+/ After the walk, clamp to [MID-PRICE_BAND, MID+PRICE_BAND] as a hard safety
+/ net against rare extreme excursions.
+/ Round to 2 decimal places via the integer trick: floor(x*100+0.5)/100.
 
-steps:STEP * (2.0 * N?1.0) - 1.0        / uniform draws scaled to [-STEP,+STEP]
-rawPrices:MID + sums steps               / cumulative walk starting at MID
+noise:(2.0 * N?1.0) - 1.0                          / N uniform draws on [-1, +1]
+rawPrices:{x + (neg[THETA] * x - MID) + STEP * y}\[MID; noise]  / OU walk
+rawPrices:(MID-PRICE_BAND) | (MID+PRICE_BAND) & rawPrices        / clamp to band
 prices:"f"$(`long$rawPrices * 100.0) % 100.0   / round to 2dp
 
 / ---------------------------------------------------------------------------
