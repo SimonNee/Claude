@@ -163,11 +163,27 @@ Iteration 1 code and recommends trade-offs before changes are made.
 
 ---
 
+## Completed Work
+
+### Iteration 1 ✓ COMPLETE (`fa49a1f`)
+- Naive `std::map` + `std::deque` orderbook
+- 14/14 correctness tests passing
+- `main.cpp` smoke test driver
+
+### q Data Generator ✓ COMPLETE (`e1ed5e4`, `ac54771`)
+- `cpp/orderbook/data/gen_orders.q` — generates 1M synthetic limit orders as CSV
+  - Random price walk around mid 100.0, step ±0.05
+  - Exponential qty distribution (mean ~50, capped at 1000)
+  - 50/50 Buy/Sell, `f` suffix stripped post-save
+- `cpp/orderbook/data/schema.md` — contract between q generator and C++ consumer
+- CSV load validated in `main.cpp`: 1M rows, 0 malformed, final spread 0.04
+
+---
+
 ## Next Steps
 
-1. User authorises Iteration 1 → implement naive baseline
-2. User authorises Iteration 2 → agentTimeAndSpace analysis + cache-friendly rewrite
-3. User authorises Iteration 3 → benchmarks + first agentASM
-4. User authorises Iteration 4 → SIMD scan
-5. User authorises Iteration 5 → atomics
-6. (Parallel) Agree name for agentTimeAndSpace, write its knowledge base and agent definition
+1. **Iteration 2** — user authorisation needed → agentTimeAndSpace analysis + cache-friendly rewrite
+2. **Iteration 3** — benchmarks + first agentASM
+3. **Iteration 4** — SIMD scan
+4. **Iteration 5** — atomics
+5. (Parallel) Agree name for agentTimeAndSpace, write its knowledge base and agent definition
