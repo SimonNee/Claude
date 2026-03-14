@@ -74,7 +74,32 @@ Four issues identified. Three recommended, one deferred:
 
 This is the null datum. All subsequent iterations are measured against it.
 
-**Key reasoning:**
+### Iteration 2 Timing Result
+
+| Metric | Iteration 1 | Iteration 2 | Delta |
+|--------|-------------|-------------|-------|
+| Cycles/order | 1,196 | 1,727 | **+44% — REGRESSION** |
+
+**The changes made things slower.** The null datum caught it immediately.
+
+**Likely cause:** The synthetic random walk workload creates far more distinct price
+levels than the assumed p < 100. With many active levels, the O(p) vector shift on
+insert and `erase` during matching is more expensive than `std::map`'s pointer-chasing.
+This is agentDuality Pitfall 3 in action — "assuming contiguous always wins."
+
+**The struct reorder (Change 3) is retained** — it is zero-cost and correct.
+
+**The map → vector change requires investigation:**
+- The p < 100 assumption was unvalidated against the actual workload
+- The synthetic data is pathological — a random walk with step 0.05 creates a new
+  price level almost every order, driving p high
+- For a real liquid orderbook, p is genuinely small (< 20 meaningful levels)
+- The correct next step is to instrument the run to measure actual p
+
+**Key lesson:** the baseline exists precisely for this. We made a change, it was
+slower, we know immediately. No argument possible — the datum is the datum.
+
+**Key reasoning (original agentDuality analysis — still valid at small p):**
 - At p < 100 price levels the sorted vector beats the map on cache grounds — all levels fit in L1
 - Deque 512-byte minimum chunk waste eliminated; inner matching loop becomes a sequential scan
 - Order struct reorder is zero-cost — 25% size reduction, better packing density

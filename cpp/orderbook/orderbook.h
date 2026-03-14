@@ -1,16 +1,35 @@
 #pragma once
 
-#include <deque>
-#include <map>
+#include <cstddef>
 #include <optional>
+#include <vector>
 
 enum class Side { Buy, Sell };
 
+// Members ordered largest-to-smallest to eliminate padding waste.
+// sizeof(Order) == 24 (was 32 in Iteration 1).
 struct Order {
-    int    id;
     double price;
     double quantity;
+    int    id;
     Side   side;
+};
+
+static_assert(sizeof(Order) == 24, "Order layout changed — check struct padding");
+
+// A single price level: one price, a contiguous queue of resting orders.
+// head advances on each fill (logical pop_front, no shifting).
+// Orders before head are consumed; [head, orders.size()) are live.
+struct PriceLevel {
+    double             price;
+    std::vector<Order> orders;
+    std::size_t        head = 0;
+
+    bool         empty()  const { return head >= orders.size(); }
+    Order&       front()        { return orders[head]; }
+    const Order& front()  const { return orders[head]; }
+    void         pop_front()    { ++head; }
+    void         push_back(const Order& o) { orders.push_back(o); }
 };
 
 class OrderBook {
@@ -30,10 +49,8 @@ public:
 private:
     int nextId = 1;
 
-    // Bids: highest price first
-    std::map<double, std::deque<Order>, std::greater<double>> bids;
-    // Asks: lowest price first
-    std::map<double, std::deque<Order>> asks;
+    std::vector<PriceLevel> bids;  // sorted descending by price
+    std::vector<PriceLevel> asks;  // sorted ascending by price
 
     void matchBuy(Order& order);
     void matchSell(Order& order);
