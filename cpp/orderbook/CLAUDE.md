@@ -34,7 +34,7 @@ g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
 | Iter | Focus | agentASM |
 |------|-------|----------|
 | 1 | Naive `std::map` + `std::deque` | No |
-| 2 | Cache-friendly flat array + agentTimeAndSpace review | No |
+| 2 | Cache-friendly flat array + agentDuality review | No |
 | 3 | RDTSC benchmarks + first asm (`getSpread`, matching loop) | Yes |
 | 4 | SIMD price level scan (`cmpps`/`cmppd`) | Yes |
 | 5 | Atomics — snapshot publish, `lock xadd` id generation | Yes |

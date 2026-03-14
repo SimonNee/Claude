@@ -48,6 +48,6 @@ These will be addressed in Iterations 2–4.
 
 ---
 
-## Iteration 2 — Better C++ + agentTimeAndSpace Analysis
+## Iteration 2 — Better C++ + agentDuality Analysis
 
 **Status**: PENDING — awaiting user authorisation

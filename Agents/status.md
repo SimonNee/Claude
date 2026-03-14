@@ -28,10 +28,10 @@
   | `calling-conv.md` | System V AMD64 ABI — args, return values, register preservation |
   | `pitfalls.md` | 12-point pre-flight checklist and documented failure modes |
 
-### agentTimeAndSpace ✗ NOT STARTED
+### agentDuality ✗ NOT STARTED
 
-- Name TBD (candidates: `agentBigO`, `agentOpt`, `agentPerf`)
-- Scope agreed: Big-O complexity, space trade-offs, vectorisation, parallelism, cache efficiency
+- **Name**: `agentDuality` — time and space are duals; you can almost always trade one for the other
+- Scope: Big-O complexity, space trade-offs, vectorisation, parallelism, cache efficiency
 - No knowledge base or agent definition written yet
 - **Will be exercised in Iteration 2 of the orderbook project** (see below)
 
@@ -87,15 +87,15 @@ g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
 
 ---
 
-### Iteration 2 — Better C++ + agentTimeAndSpace Analysis (PENDING)
+### Iteration 2 — Better C++ + agentDuality Analysis (PENDING)
 
-**Goal**: Replace `std::map` with cache-friendly structures. agentTimeAndSpace reviews
+**Goal**: Replace `std::map` with cache-friendly structures. agentDuality reviews
 Iteration 1 code and recommends trade-offs before changes are made.
 
 - Replace `std::map` with sorted `std::vector<PriceLevel>` (flat array, binary search insert)
 - Cache-aligned `Order` structs (`alignas(64)`)
 - Contiguous order storage per price level
-- Run agentTimeAndSpace on Iter 1 → document analysis in `status.md`
+- Run agentDuality on Iter 1 → document analysis in `status.md`
 - **No agentASM involvement yet**
 
 ---
@@ -144,7 +144,7 @@ Iteration 1 code and recommends trade-offs before changes are made.
 | Iteration | agentASM | What it replaces |
 |-----------|----------|-----------------|
 | 1 | No | — |
-| 2 | No (agentTimeAndSpace analysis) | — |
+| 2 | No (agentDuality analysis) | — |
 | 3 | Yes — first use | `getSpread()`, quantity arithmetic |
 | 4 | Yes — SIMD | Price level scan loop |
 | 5 | Yes — atomics | Snapshot publish, id generation |
@@ -182,8 +182,8 @@ Iteration 1 code and recommends trade-offs before changes are made.
 
 ## Next Steps
 
-1. **Iteration 2** — user authorisation needed → agentTimeAndSpace analysis + cache-friendly rewrite
+1. **Iteration 2** — user authorisation needed → agentDuality analysis + cache-friendly rewrite
 2. **Iteration 3** — benchmarks + first agentASM
 3. **Iteration 4** — SIMD scan
 4. **Iteration 5** — atomics
-5. (Parallel) Agree name for agentTimeAndSpace, write its knowledge base and agent definition
+5. (Parallel) Agree name for agentDuality, write its knowledge base and agent definition
