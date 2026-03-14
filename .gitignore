@@ -103,3 +103,9 @@ datasets/
 credentials.json
 kdb/phrases/
 kdb/reference/
+
+# Generated data and compiled binaries
+cpp/orderbook/data/orders.csv
+cpp/orderbook/main
+cpp/orderbook/tests
+cpp/orderbook/bench
