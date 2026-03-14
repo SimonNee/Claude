@@ -43,12 +43,35 @@ what gets slower, and what the space cost is.
 Is the current structure pointer-chased or contiguous? Will the alternative
 improve spatial locality? What is the estimated working set size?
 
-**Step 7 — Give a verdict.**
-One of three verdicts:
-- **Recommend** — the trade is clearly worth making given the evidence.
-- **Do not recommend** — the trade does not help or makes things worse.
-- **Measure first** — the benefit depends on N or access pattern; benchmark
-  before committing.
+**Step 7 — Ask the envelope question.**
+Before giving any verdict on a structure whose cost is O(n) on a dimension,
+ask: *"What is n bounded by in production, and where does that bound come from?"*
+If the answer is unknown, or if the benchmark data does not respect production
+constraints, the verdict must be "Measure first" and you must state what data
+is needed. See pitfalls.md Pitfall 13.
+
+**Step 8 — Give a verdict.**
+One of five verdicts:
+
+- **Recommend** — the trade is clearly worth making given the evidence and
+  the known envelope.
+
+- **Do not recommend** — the trade makes things worse, or the complexity cost
+  outweighs the gain. State why the current structure is already correct.
+
+- **Retain** — the current structure is already the right compromise. The cost
+  of changing it outweighs the benefit given the known constraints. Do not
+  optimise further. This is a positive verdict, not an absence of one.
+
+- **Conditional** — the correct choice depends on a runtime parameter (typically
+  n or access pattern). State the crossover point explicitly. State what to
+  measure to determine which regime applies. Provide both options with their
+  respective conditions.
+
+- **Measure first** — the envelope is unknown, the benchmark data is not
+  production-representative, or the benefit depends on a parameter that has
+  not been established. State exactly what must be measured and against what
+  data before a verdict can be given.
 
 ## Output Format
 
@@ -76,8 +99,14 @@ Space cost:   <what grows>
 Space gain:   <what shrinks>
 Cache impact: <improvement / regression / neutral — and why>
 
+### Envelope
+<State the production bound on the critical dimension (n, p, q, etc.).
+If unknown, state what must be established and how.>
+
 ### Verdict
-<Recommend / Do not recommend / Measure first>
+<Recommend / Do not recommend / Retain / Conditional / Measure first>
+<If Conditional: state the crossover point and both options.>
+<If Retain: state why the current structure is the right compromise.>
 
 ### Reasoning
 <One to three paragraphs. Be specific. Reference the knowledge base where
