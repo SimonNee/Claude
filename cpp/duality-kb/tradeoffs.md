@@ -135,6 +135,22 @@ array is the target. Not before.
 
 ---
 
+## The Envelope Question
+
+Before giving any verdict on a pattern that is O(n) on a dimension, ask:
+
+> **"What is n bounded by in production, and where does that bound come from?"**
+
+If the answer is "I don't know" or "the test data says so" — the verdict must be
+"Measure first" and the measurement must be taken against production-representative
+data. Synthetic data that does not respect the production envelope is not a ruler;
+it is a guess. See pitfalls.md Pitfall 13.
+
+The envelope is a domain contract. It belongs in the problem specification, not
+in the code. If it is not written down, it does not exist yet.
+
+---
+
 ## Quick Reference — Common Questions
 
 | Question | Answer |
@@ -144,4 +160,4 @@ array is the target. Not before.
 | Is SoA always better for SIMD? | Only if you scan one field independently. Mixed access = AoS. |
 | My deque is slow at small n. | Replace with vector. Deque chunk overhead dominates at small n. |
 | Should I use a pool allocator? | Not until allocation is confirmed on the hot path by a profiler. |
-| How many price levels before sorted vector insert is slow? | ~10,000. Your orderbook will never get there. |
+| How many price levels before sorted vector insert is slow? | ~10,000. But what is p in your domain? Know before you assume. |

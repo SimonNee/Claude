@@ -136,3 +136,45 @@ any algorithmic change.
 
 **Unpredictable branches in inner loops are a layout problem, not an algorithm
 problem.**
+
+---
+
+## Pitfall 13 — Analysing Without Knowing the Envelope
+
+A recommendation that is correct for n=50 may be wrong for n=5000. Before
+recommending any structure whose cost is O(n) on a dimension, you must establish
+what that n is in production — not in test data, not in theory, not by assumption.
+
+**You cannot measure unless you know how long your ruler is.** A benchmark run
+against synthetic data that does not match the production distribution is not a
+measurement — it is a guess with false precision.
+
+This applies to every domain differently. The dimension and its envelope are
+always domain-specific — they come from the problem, not the code:
+
+| Domain | The dimension to bound | Typical envelope |
+|--------|-----------------------|-----------------|
+| Game entity system | Live entities per frame | Engine budget |
+| Network packet queue | Concurrent in-flight packets | Protocol spec |
+| Database index | Rows per page / branching factor | Schema and hardware |
+| Physics simulation | Active collision pairs | Scene complexity |
+| Financial orderbook | Active price levels (p) | Market microstructure |
+| Event queue | Pending events per tick | System throughput |
+
+The financial orderbook is one exemplar. The principle is universal.
+
+The envelope is a domain contract, not a code contract. It comes from the
+problem owner, not from the code. If you do not have it, ask for it before
+giving a verdict.
+
+**If the envelope is unknown, the verdict must be "Measure first" — and the
+measurement must be taken against production-representative data, not synthetic
+data generated without envelope constraints.**
+
+Synthetic data that does not respect the production envelope (e.g. a free random
+walk that creates unbounded price levels when a real book has 20) will produce
+benchmarks that are misleading in both directions — making good structures look
+bad and bad structures look good.
+
+**The fix is not to distrust benchmarks. The fix is to validate the data before
+trusting the benchmark.**
