@@ -1,10 +1,18 @@
 #include "orderbook.h"
 
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
+
+static uint64_t rdtscp() {
+    uint32_t lo, hi, aux;
+    __asm__ volatile ("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux));
+    return ((uint64_t)hi << 32) | lo;
+}
 
 static void printBook(const OrderBook& book) {
     std::cout << std::fixed << std::setprecision(2);
@@ -39,7 +47,7 @@ int main() {
     book.cancelOrder(id);
     printBook(book);
 
-    // --- CSV load test ---
+    // --- CSV load test + timing ---
     std::cout << "\n=== CSV Load Test ===\n\n";
 
     std::ifstream csv("data/orders.csv");
@@ -48,15 +56,21 @@ int main() {
         return 1;
     }
 
-    OrderBook csvBook;
+    // Pre-load all lines so CSV I/O is not included in the orderbook timing
+    std::vector<std::string> lines;
+    lines.reserve(1000001);
     std::string line;
     std::getline(csv, line);  // skip header
+    while (std::getline(csv, line)) lines.push_back(line);
 
     int loaded = 0;
     int malformed = 0;
+    OrderBook csvBook;
 
-    while (std::getline(csv, line)) {
-        std::istringstream ss(line);
+    uint64_t t0 = rdtscp();
+
+    for (const auto& row : lines) {
+        std::istringstream ss(row);
         std::string priceStr, qtyStr, sideStr;
 
         if (!std::getline(ss, priceStr, ',') ||
@@ -75,8 +89,13 @@ int main() {
         ++loaded;
     }
 
+    uint64_t t1 = rdtscp();
+    uint64_t cycles = t1 - t0;
+
     std::cout << "Rows loaded  : " << loaded    << "\n";
     std::cout << "Malformed    : " << malformed  << "\n";
+    std::cout << "Total cycles : " << cycles     << "\n";
+    std::cout << "Cycles/order : " << cycles / loaded << "\n";
     printBook(csvBook);
 
     return 0;

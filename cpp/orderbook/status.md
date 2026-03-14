@@ -50,4 +50,32 @@ These will be addressed in Iterations 2–4.
 
 ## Iteration 2 — Better C++ + agentDuality Analysis
 
-**Status**: PENDING — awaiting user authorisation
+**Status**: IN PROGRESS
+**Date**: 2026-03-14
+
+### agentDuality Analysis — Summary
+
+Four issues identified. Three recommended, one deferred:
+
+| Issue | Change | Verdict |
+|-------|--------|---------|
+| 1 | `std::map` → `std::vector<PriceLevel>` sorted flat | Recommend |
+| 2 | `std::deque<Order>` → `std::vector<Order>` + head index | Recommend |
+| 3 | Reorder `Order` struct members (doubles first) — 32→24 bytes | Recommend |
+| 4 | `id → location` index for O(1) `cancelOrder` | Measure first — cancel rate unknown |
+
+### Iteration 1 Baseline Timing (recorded before any changes)
+
+| Metric | Value |
+|--------|-------|
+| Orders processed | 1,000,000 |
+| Total cycles | 1,196,486,293 |
+| **Cycles/order** | **1,196** |
+
+This is the null datum. All subsequent iterations are measured against it.
+
+**Key reasoning:**
+- At p < 100 price levels the sorted vector beats the map on cache grounds — all levels fit in L1
+- Deque 512-byte minimum chunk waste eliminated; inner matching loop becomes a sequential scan
+- Order struct reorder is zero-cost — 25% size reduction, better packing density
+- cancelOrder O(p*q) scan left unchanged until cancel rate is measured in Iteration 3
