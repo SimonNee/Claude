@@ -24,12 +24,15 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
         if (order.quantity > 0.0) {
             auto it = findBidLevel(bids, price);
             if (it != bids.end() && it->price == price) {
+                std::size_t idx = it->orders.size();
                 it->push_back(order);
+                orderIndex[order.id] = {Side::Buy, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 bids.insert(it, std::move(level));
+                orderIndex[order.id] = {Side::Buy, price, 0};
             }
         }
     } else {
@@ -37,12 +40,15 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
         if (order.quantity > 0.0) {
             auto it = findAskLevel(asks, price);
             if (it != asks.end() && it->price == price) {
+                std::size_t idx = it->orders.size();
                 it->push_back(order);
+                orderIndex[order.id] = {Side::Sell, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 asks.insert(it, std::move(level));
+                orderIndex[order.id] = {Side::Sell, price, 0};
             }
         }
     }
@@ -63,7 +69,10 @@ void OrderBook::matchBuy(Order& order) {
             double fill = std::min(order.quantity, resting.quantity);
             order.quantity   -= fill;
             resting.quantity -= fill;
-            if (resting.quantity == 0.0) level.pop_front();
+            if (resting.quantity == 0.0) {
+                orderIndex.erase(resting.id);
+                level.pop_front();
+            }
         }
         if (level.empty()) drained = true;
     }
@@ -84,7 +93,10 @@ void OrderBook::matchSell(Order& order) {
             double fill = std::min(order.quantity, resting.quantity);
             order.quantity   -= fill;
             resting.quantity -= fill;
-            if (resting.quantity == 0.0) level.pop_front();
+            if (resting.quantity == 0.0) {
+                orderIndex.erase(resting.id);
+                level.pop_front();
+            }
         }
         if (level.empty()) drained = true;
     }
@@ -94,27 +106,25 @@ void OrderBook::matchSell(Order& order) {
 }
 
 bool OrderBook::cancelOrder(int id) {
-    for (std::size_t li = 0; li < bids.size(); ++li) {
-        auto& level = bids[li];
-        for (std::size_t oi = level.head; oi < level.orders.size(); ++oi) {
-            if (level.orders[oi].id == id) {
-                level.orders.erase(level.orders.begin() + oi);
-                if (level.empty()) bids.erase(bids.begin() + li);
-                return true;
-            }
-        }
+    auto mapIt = orderIndex.find(id);
+    if (mapIt == orderIndex.end()) return false;
+
+    auto [side, levelPrice, orderIdx] = mapIt->second;
+    auto& levels = (side == Side::Buy) ? bids : asks;
+
+    auto levelIt = (side == Side::Buy)
+        ? findBidLevel(levels, levelPrice)
+        : findAskLevel(levels, levelPrice);
+
+    if (levelIt == levels.end() || levelIt->price != levelPrice) {
+        orderIndex.erase(mapIt);
+        return false;
     }
-    for (std::size_t li = 0; li < asks.size(); ++li) {
-        auto& level = asks[li];
-        for (std::size_t oi = level.head; oi < level.orders.size(); ++oi) {
-            if (level.orders[oi].id == id) {
-                level.orders.erase(level.orders.begin() + oi);
-                if (level.empty()) asks.erase(asks.begin() + li);
-                return true;
-            }
-        }
-    }
-    return false;
+
+    levelIt->cancel_at(mapIt->second.orderIdx);   // O(1) direct index — no scan, no shift
+    if (levelIt->empty()) levels.erase(levelIt);
+    orderIndex.erase(mapIt);
+    return true;
 }
 
 std::optional<double> OrderBook::getBestBid() const {

@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <optional>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 enum class Side { Buy, Sell };
@@ -18,19 +20,31 @@ struct Order {
 static_assert(sizeof(Order) == 24, "Order layout changed — check struct padding");
 
 // A single price level: one price, a contiguous queue of resting orders.
-// head advances on each fill (logical pop_front, no shifting).
-// Orders before head are consumed; [head, orders.size()) are live.
+// head advances past filled/cancelled orders (logical pop_front, no shifting).
+// Cancelled orders are marked with id=0 (tombstone); the match loop skips them.
+// liveOrders tracks non-cancelled, non-filled orders for O(1) empty() checks.
 struct PriceLevel {
     double             price;
     std::vector<Order> orders;
-    std::size_t        head = 0;
+    std::size_t        head       = 0;
+    std::size_t        liveOrders = 0;
 
-    bool         empty()     const { return head >= orders.size(); }
-    std::size_t  liveCount() const { return orders.size() - head; }
+    bool         empty()     const { return liveOrders == 0; }
+    std::size_t  liveCount() const { return liveOrders; }
     Order&       front()           { return orders[head]; }
     const Order& front()     const { return orders[head]; }
-    void         pop_front()       { ++head; }
-    void         push_back(const Order& o) { orders.push_back(o); }
+
+    // Advance head. Only decrements liveOrders for live orders — tombstones
+    // (id=0) were already decremented at cancel time.
+    void pop_front() {
+        if (orders[head].id != 0) --liveOrders;
+        ++head;
+    }
+
+    void push_back(const Order& o) { ++liveOrders; orders.push_back(o); }
+
+    // Mark order at oi as cancelled. O(1) — no shifting.
+    void cancel_at(std::size_t oi) { orders[oi].id = 0; --liveOrders; }
 };
 
 class OrderBook {
@@ -62,6 +76,16 @@ private:
 
     std::vector<PriceLevel> bids;  // sorted descending by price
     std::vector<PriceLevel> asks;  // sorted ascending by price
+
+    struct OrderLocation {
+        Side        side;
+        double      levelPrice;
+        std::size_t orderIdx;   // index into PriceLevel::orders — stable (no shifting)
+    };
+
+    // O(1) cancel lookup: id → exact location.
+    // Inserted when an order rests; erased when filled or cancelled.
+    std::unordered_map<int, OrderLocation> orderIndex;
 
     void matchBuy(Order& order);
     void matchSell(Order& order);
