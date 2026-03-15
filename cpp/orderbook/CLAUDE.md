@@ -23,12 +23,12 @@ g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
 - Each iteration requires explicit user authorisation before starting
 - Correctness tests (`tests.cpp`) must pass unchanged at every iteration
 - Benchmarks introduced at Iteration 3; results recorded in `status.md`
-- agentASM first used at Iteration 3
+- agentASM postponed — will be introduced when user authorises it (originally planned for Iter 3)
 - **Tag on iteration transition**: when the user authorises iteration N+1, tag the current state as `git tag iter-N-complete` before making any changes — this guarantees the tag always captures a confirmed, tested baseline
 
 ## Current Iteration
 
-**1 — Naive C++ Baseline**
+**3 — Benchmarks + O(1) cancelOrder**
 
 ## Iteration Summary
 
@@ -36,6 +36,6 @@ g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
 |------|-------|----------|
 | 1 | Naive `std::map` + `std::deque` | No |
 | 2 | Cache-friendly flat array + agentDuality review | No |
-| 3 | RDTSC benchmarks + first asm (`getSpread`, matching loop) | Yes |
-| 4 | SIMD price level scan (`cmpps`/`cmppd`) | Yes |
-| 5 | Atomics — snapshot publish, `lock xadd` id generation | Yes |
+| 3 | RDTSC benchmarks, O(1) cancelOrder (id→location index + lazy deletion) | No |
+| 4 | SIMD price level scan (`cmpps`/`cmppd`) | Yes (postponed) |
+| 5 | Atomics — snapshot publish, `lock xadd` id generation | Yes (postponed) |
