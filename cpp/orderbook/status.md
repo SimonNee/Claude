@@ -202,8 +202,9 @@ Iteration 3 techniques (per-phase profiling with `perf annotate` to isolate the 
 
 ## Iteration 3 — Benchmarks + cancelOrder O(1)
 
-**Status**: IN PROGRESS
+**Status**: COMPLETE
 **Date**: 2026-03-15
+**Tag**: `iter-3-complete`
 
 ### What was implemented
 
