@@ -1,6 +1,7 @@
 #include "orderbook.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -65,15 +66,26 @@ int main() {
     std::getline(csv, line);  // skip header
     while (std::getline(csv, line)) lines.push_back(line);
 
-    constexpr bool INSTRUMENT_P = true;  // set false to eliminate all p-tracking at compile time
+    constexpr bool INSTRUMENT_P          = true;   // set false to eliminate p-tracking at compile time
+    constexpr bool INSTRUMENT_TIMESERIES = true;   // set false to eliminate time-series at compile time
+    constexpr std::size_t TS_BUCKETS     = 10;     // constexpr → stack-allocated std::array, no heap
 
     int loaded = 0;
     int malformed = 0;
     OrderBook csvBook;
+
     std::vector<std::size_t> pSamples;
     if constexpr (INSTRUMENT_P) pSamples.reserve(lines.size());
 
+    // Stack-allocated: TS_BUCKETS is constexpr so array size is compile-time
+    std::array<uint64_t, TS_BUCKETS + 1> tsMarks{};
+    std::size_t tsNext = 0;   // next boundary (runtime — lines.size() not constexpr)
+    std::size_t tsMark = 1;   // next slot to write into tsMarks
+    if constexpr (INSTRUMENT_TIMESERIES)
+        tsNext = lines.size() / TS_BUCKETS;
+
     uint64_t t0 = rdtscp();
+    if constexpr (INSTRUMENT_TIMESERIES) tsMarks[0] = t0;
 
     for (const auto& row : lines) {
         std::istringstream ss(row);
@@ -95,9 +107,18 @@ int main() {
         if constexpr (INSTRUMENT_P)
             pSamples.push_back(csvBook.bidLevels() + csvBook.askLevels());
         ++loaded;
+
+        // Equality check — cheaper than modulo on every iteration
+        if constexpr (INSTRUMENT_TIMESERIES) {
+            if ((std::size_t)loaded == tsNext && tsMark < TS_BUCKETS) {
+                tsMarks[tsMark++] = rdtscp();
+                tsNext += lines.size() / TS_BUCKETS;
+            }
+        }
     }
 
     uint64_t t1 = rdtscp();
+    if constexpr (INSTRUMENT_TIMESERIES) tsMarks[TS_BUCKETS] = t1;
     uint64_t cycles = t1 - t0;
 
     std::cout << "Rows loaded  : " << loaded    << "\n";
@@ -115,6 +136,16 @@ int main() {
         std::cout << "  p95  : " << pSamples[pSamples.size() * 95 / 100] << "\n";
         std::cout << "  p99  : " << pSamples[pSamples.size() * 99 / 100] << "\n";
         std::cout << "  max  : " << pSamples.back() << "\n";
+    }
+
+    if constexpr (INSTRUMENT_TIMESERIES) {
+        const std::size_t bucketOrders = lines.size() / TS_BUCKETS;
+        std::cout << "\n--- Cycles/order by decile ---\n";
+        for (std::size_t i = 0; i < TS_BUCKETS; ++i) {
+            std::cout << "  [" << std::setw(3) << (i * 10)
+                      << "-" << std::setw(3) << ((i + 1) * 10) << "%] : "
+                      << (tsMarks[i + 1] - tsMarks[i]) / bucketOrders << "\n";
+        }
     }
     printBook(csvBook);
 
