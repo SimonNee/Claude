@@ -112,8 +112,32 @@ drain, mid-traversal.
 `remove_if` pass after the loop, guarded by a `drained` flag so the scan is skipped
 entirely for non-crossing orders (the common case).
 
-**Remaining gap (+3%):** `cancelOrder` still uses `erase(begin() + oi)` inside the order
-vector — bypasses the head-index trick. Cancel rate unknown; addressed in Iteration 3.
+### Time-series instrumentation (2026-03-15)
+
+Cycles/order measured per decile across the 1,000,000 order run:
+
+| Decile | Cycles/order |
+|--------|-------------|
+| 0–10%  | 1,234 |
+| 10–20% | 1,254 |
+| 20–30% | 1,227 |
+| 30–40% | 1,255 |
+| 40–50% | 1,247 |
+| 50–60% | 1,244 |
+| 60–70% | 1,257 |
+| 70–80% | 1,252 |
+| 80–90% | 1,290 |
+| 90–100%| 1,247 |
+
+**Finding: flat across all deciles.** No degradation trend over the run. This rules out
+head-index inflation (growing dead prefix in order vectors) as the source of the gap.
+
+**Conclusion:** the remaining +3% is structural — the map's 72-node working set stays
+warm in L2 throughout the run, making temporal locality more competitive than spatial
+locality theory predicted at p=72. Closing the gap further requires either a structural
+change within Iteration 2 or Iteration 3 techniques.
+
+**Iteration 2 status:** IN PROGRESS — one further idea to explore before closing out.
 
 ### Key reasoning (agentDuality — still valid at small p)
 
