@@ -24,6 +24,7 @@ g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
 - Correctness tests (`tests.cpp`) must pass unchanged at every iteration
 - Benchmarks introduced at Iteration 3; results recorded in `status.md`
 - agentASM first used at Iteration 3
+- **Tag on iteration transition**: when the user authorises iteration N+1, tag the current state as `git tag iter-N-complete` before making any changes — this guarantees the tag always captures a confirmed, tested baseline
 
 ## Current Iteration
 
