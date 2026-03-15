@@ -51,37 +51,46 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
 }
 
 void OrderBook::matchBuy(Order& order) {
-    // Walk asks lowest-first; stop when no more crossable levels
-    for (auto it = asks.begin(); it != asks.end() && order.quantity > 0.0; ) {
-        if (it->price > order.price) break;
+    // Walk asks lowest-first; stop when no more crossable levels.
+    // Compaction is deferred to a single pass, but only runs when at least one
+    // level was fully drained — avoids O(p) scan on the common non-crossing case.
+    bool drained = false;
+    for (auto& level : asks) {
+        if (order.quantity <= 0.0 || level.price > order.price) break;
 
-        while (!it->empty() && order.quantity > 0.0) {
-            Order& resting = it->front();
+        while (!level.empty() && order.quantity > 0.0) {
+            Order& resting = level.front();
             double fill = std::min(order.quantity, resting.quantity);
             order.quantity   -= fill;
             resting.quantity -= fill;
-            if (resting.quantity == 0.0) it->pop_front();
+            if (resting.quantity == 0.0) level.pop_front();
         }
-
-        it = it->empty() ? asks.erase(it) : std::next(it);
+        if (level.empty()) drained = true;
     }
+    if (drained)
+        asks.erase(std::remove_if(asks.begin(), asks.end(),
+            [](const PriceLevel& pl) { return pl.empty(); }), asks.end());
 }
 
 void OrderBook::matchSell(Order& order) {
-    // Walk bids highest-first; stop when no more crossable levels
-    for (auto it = bids.begin(); it != bids.end() && order.quantity > 0.0; ) {
-        if (it->price < order.price) break;
+    // Walk bids highest-first; stop when no more crossable levels.
+    // Same conditional deferred compaction as matchBuy.
+    bool drained = false;
+    for (auto& level : bids) {
+        if (order.quantity <= 0.0 || level.price < order.price) break;
 
-        while (!it->empty() && order.quantity > 0.0) {
-            Order& resting = it->front();
+        while (!level.empty() && order.quantity > 0.0) {
+            Order& resting = level.front();
             double fill = std::min(order.quantity, resting.quantity);
             order.quantity   -= fill;
             resting.quantity -= fill;
-            if (resting.quantity == 0.0) it->pop_front();
+            if (resting.quantity == 0.0) level.pop_front();
         }
-
-        it = it->empty() ? bids.erase(it) : std::next(it);
+        if (level.empty()) drained = true;
     }
+    if (drained)
+        bids.erase(std::remove_if(bids.begin(), bids.end(),
+            [](const PriceLevel& pl) { return pl.empty(); }), bids.end());
 }
 
 bool OrderBook::cancelOrder(int id) {
