@@ -178,3 +178,90 @@ bad and bad structures look good.
 
 **The fix is not to distrust benchmarks. The fix is to validate the data before
 trusting the benchmark.**
+
+---
+
+## Pitfall 14 — The Inner Container Envelope Must Be Measured, Not Assumed
+
+Any nested container structure (vector of vectors, map of deques, etc.) has **two
+envelope dimensions**: the outer count and the inner count. Both must be bounded
+empirically before any working-set or cache-level estimate is valid.
+
+An unvalidated inner count (q) invalidates the entire working-set computation
+regardless of how well the outer count (p) is known.
+
+**The failure mode:** the outer count is instrumented and confirmed. The inner count
+is assumed from first principles or left as "small". The working-set estimate is
+computed using the assumed inner count and presented as the expected case. The
+verdict is issued. When the inner count is finally measured it is 100× larger than
+assumed, invalidating the cache-level claim and the verdict.
+
+**The rule:** for every dimension d that appears in a working-set or O() expression,
+ask "What is d bounded by in production and where does that bound come from?" If the
+answer for any dimension is "assumed" or "unknown", the verdict for the affected
+expressions must be "Measure first."
+
+**Common nested container dimensions to instrument:**
+- Orders per price level (q) in an orderbook
+- Messages per topic in a pub/sub queue
+- Children per node in a tree structure
+- Items per bucket in a hash table with chaining
+
+---
+
+## Pitfall 15 — Container Growth Cost: Dominant Operation Determines the Winner
+
+`std::vector` is O(1) amortised for `push_back`. `std::deque` is O(1) true for
+`push_back`. These are the same complexity class but have very different constant
+factors at large inner count (q):
+
+| Operation | vector | deque |
+|-----------|--------|-------|
+| `push_back` (no realloc) | O(1), write to tail | O(1), write to tail |
+| `push_back` (realloc event) | O(q) — copies entire buffer | Never happens |
+| Sequential scan (front→back) | Cache-line sequential, prefetcher-friendly | One pointer hop per chunk boundary |
+| Working set | One contiguous block | One pointer array + N chunks |
+
+**The crossover:** vector wins when reads (sequential scan) dominate. Deque wins
+when writes (push_back growth) dominate and q is large. At small q (< ~20), vector
+wins unconditionally — deque chunk overhead dominates. At large q with growth,
+deque's amortised O(1) true push_back avoids the O(log q) reallocation-copy events
+that vector accumulates.
+
+**The rule:** identify the dominant operation before selecting a container for the
+inner collection. If the dominant operation is reads, vector. If the dominant
+operation is unbounded growth (push_back with large eventual q), deque or a chunked
+structure avoids the mass-copy events.
+
+**Do not assume reads dominate.** In workloads where orders accumulate without being
+consumed (low fill rate, no cancels), push_back is the dominant inner operation.
+
+---
+
+## Pitfall 16 — Bimodal Distributions Break Uniform Pre-allocation
+
+When the inner container size has a bimodal or heavy-tailed distribution, there is
+no single `reserve(N)` that efficiently serves all instances:
+
+- If N is set to the max: shallow instances waste the vast majority of reserved
+  capacity, expanding the working set and degrading cache density for those instances.
+- If N is set to the mean: deep instances (above mean) still reallocate, which may
+  be the expensive instances you were trying to avoid.
+- If N is set to p95: 5% of instances still reallocate, at the largest q values —
+  the most expensive reallocation events are not eliminated.
+
+**Example — bimodal q distribution (observed in orderbook):**
+- p50 = 106 orders per level, p75 = 1,163, p99 = 9,306
+- reserve(9,306) → shallow levels waste 98.9% of reserved capacity
+- reserve(106) → deep levels reallocate starting from q=107
+
+**The rule:** before recommending `reserve(N)`, instrument the inner count
+distribution. If the distribution is bimodal or heavy-tailed, uniform pre-allocation
+is a heuristic at best. The correct approach is tiered pools (separate small/large
+allocations), dynamic sizing based on level identity, or accepting the reallocation
+cost and confirming via profiler that it is actually on the hot path before investing
+in a fix.
+
+**Reserve(small_conservative) is the least-bad single-value choice** — it eliminates
+early reallocation events for all instances without over-committing memory for shallow
+instances. But it is still a heuristic, not a solution.

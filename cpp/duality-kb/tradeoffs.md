@@ -158,6 +158,9 @@ in the code. If it is not written down, it does not exist yet.
 | My map is slow. Should I use unordered_map? | Only if lookup is the bottleneck AND n > ~100. Measure first. |
 | Should I align my structs to 64 bytes? | No, unless SIMD or false sharing is the confirmed issue. |
 | Is SoA always better for SIMD? | Only if you scan one field independently. Mixed access = AoS. |
-| My deque is slow at small n. | Replace with vector. Deque chunk overhead dominates at small n. |
-| Should I use a pool allocator? | Not until allocation is confirmed on the hot path by a profiler. |
+| My deque is slow at small n (< ~20 inner items). | Replace with vector. Deque chunk overhead dominates at small n. |
+| My vector is slow at large n with frequent push_back. | Deque may win — it avoids O(n) reallocation-copy events. Measure the dominant operation first. |
+| Should I use a pool allocator? | Not until allocation is confirmed on the hot path by a profiler. Pool eliminates malloc overhead but NOT reallocation-copy cost. |
+| Can I reserve(N) to avoid reallocation? | Only if the inner count distribution is not bimodal. Uniform reserve on a bimodal distribution wastes capacity on shallow instances. See Pitfall 16. |
+| Both outer and inner counts must be known before a working-set estimate is valid. | Pitfall 14 — instrument both dimensions. An unvalidated inner count invalidates the entire cache-level analysis. |
 | How many price levels before sorted vector insert is slow? | ~10,000. But what is p in your domain? Know before you assume. |
