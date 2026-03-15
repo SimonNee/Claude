@@ -127,6 +127,13 @@ For the orderbook with p price levels, each holding q orders:
 The flat vector layout for 50 levels × 10 orders each ≈ 12KB — fits entirely
 in L1 on most modern CPUs.
 
+> **Warning — q=10 is an example, not a measured value.** This table uses q=10
+> as an illustrative worked example. In production, q (live orders per level) must
+> be instrumented before any cache-level claim is valid. In one observed orderbook
+> workload, q_mean was 1,085 and q_p99 was 9,306 — producing a working set of
+> ~2.1MB (L3) rather than 12KB (L1). An unvalidated q invalidates the entire
+> working-set estimate. See **Pitfall 14**.
+
 ---
 
 ## False Sharing (Multi-threaded Only)

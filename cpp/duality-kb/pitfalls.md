@@ -265,3 +265,30 @@ in a fix.
 **Reserve(small_conservative) is the least-bad single-value choice** — it eliminates
 early reallocation events for all instances without over-committing memory for shallow
 instances. But it is still a heuristic, not a solution.
+
+---
+
+## Pitfall 17 — Identify the Dominant Operation Before Selecting a Container
+
+The benefit of contiguous layout (vector) is sequential **read** performance. This
+benefit only materialises if reads are the dominant operation. If writes (insertion,
+growth) dominate, the contiguity benefit is irrelevant and the growth cost becomes
+the deciding factor.
+
+**The failure mode:** a structure is replaced with a contiguous alternative because
+"contiguous is faster." The read benchmark improves. But in production the dominant
+operation is write (push_back, insert), and the contiguous structure's reallocation
+or shift cost dominates. The benchmark measured the wrong operation.
+
+**Before selecting an inner container, answer:**
+
+1. What is the dominant operation — reads or writes?
+2. If writes: does the container grow unboundedly (push_back) or at bounded size?
+3. If unbounded growth: does the structure avoid mass-copy on growth (deque, chunked
+   slab) or trigger it (vector doubling)?
+4. If bounded growth: what is the bound, and does reserve(bound) fit in the target
+   cache level without polluting it for shallow instances?
+
+**The dominant operation is a workload property, not a code property.** It cannot be
+determined by reading the code alone — it requires knowing the ratio of reads to writes
+at runtime. Instrument it, or derive it from the domain model before giving a verdict.
