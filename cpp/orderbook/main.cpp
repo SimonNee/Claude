@@ -1,9 +1,11 @@
 #include "orderbook.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -63,9 +65,13 @@ int main() {
     std::getline(csv, line);  // skip header
     while (std::getline(csv, line)) lines.push_back(line);
 
+    constexpr bool INSTRUMENT_P = true;  // set false to eliminate all p-tracking at compile time
+
     int loaded = 0;
     int malformed = 0;
     OrderBook csvBook;
+    std::vector<std::size_t> pSamples;
+    if constexpr (INSTRUMENT_P) pSamples.reserve(lines.size());
 
     uint64_t t0 = rdtscp();
 
@@ -86,6 +92,8 @@ int main() {
         else { ++malformed; continue; }
 
         csvBook.addOrder(side, std::stod(priceStr), std::stod(qtyStr));
+        if constexpr (INSTRUMENT_P)
+            pSamples.push_back(csvBook.bidLevels() + csvBook.askLevels());
         ++loaded;
     }
 
@@ -96,6 +104,18 @@ int main() {
     std::cout << "Malformed    : " << malformed  << "\n";
     std::cout << "Total cycles : " << cycles     << "\n";
     std::cout << "Cycles/order : " << cycles / loaded << "\n";
+
+    if constexpr (INSTRUMENT_P) {
+        std::sort(pSamples.begin(), pSamples.end());
+        double pMean = (double)std::accumulate(pSamples.begin(), pSamples.end(), 0ULL) / pSamples.size();
+        std::cout << "\n--- Active price levels (p = bids + asks) ---\n";
+        std::cout << "  min  : " << pSamples.front() << "\n";
+        std::cout << "  mean : " << std::fixed << std::setprecision(1) << pMean << "\n";
+        std::cout << "  p50  : " << pSamples[pSamples.size() * 50 / 100] << "\n";
+        std::cout << "  p95  : " << pSamples[pSamples.size() * 95 / 100] << "\n";
+        std::cout << "  p99  : " << pSamples[pSamples.size() * 99 / 100] << "\n";
+        std::cout << "  max  : " << pSamples.back() << "\n";
+    }
     printBook(csvBook);
 
     return 0;

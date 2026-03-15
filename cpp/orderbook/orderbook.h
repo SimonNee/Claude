@@ -46,6 +46,10 @@ public:
     // Returns ask - bid. nullopt if either side is empty.
     std::optional<double> getSpread() const;
 
+    // Instrumentation — active price level counts
+    std::size_t bidLevels() const { return bids.size(); }
+    std::size_t askLevels() const { return asks.size(); }
+
 private:
     int nextId = 1;
 
