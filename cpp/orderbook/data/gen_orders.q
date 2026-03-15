@@ -21,11 +21,9 @@ QTY_MAX:1000.0   / hard cap on any single order quantity
 / Ornstein-Uhlenbeck mean-reverting price walk.
 / Each step: new_price = prev + (-THETA * (prev - MID)) + (STEP * noise)
 / where noise ~ Uniform[-1, +1].
-/
 / ouStep is a 2-arg function suitable for seeded scan (\):
 /   ouStep[prev; n] returns the next price given previous price and noise n.
 / f\[seed; list] applies f left-to-right, seeded with MID, producing N prices.
-/
 / After the walk, clamp to [MID-PRICE_BAND, MID+PRICE_BAND] as a hard safety
 / net against rare extreme excursions.
 / Round to 2 decimal places via the integer trick: floor(x*100+0.5)/100.
@@ -85,8 +83,6 @@ save outFile
 / values (B, S) contain the letter 'f', so a blanket replace is correct
 / for this specific schema.
 
-lines:read0 outFile                          / list of strings, one per line
-cleaned:{ssr[x;enlist"f";""]} each lines    / strip all 'f' from each line
-outFile 0: cleaned                           / write lines back (no newline added by 0:)
+system "sed -i 's/f//g' /home/developer/Documents/Claude/cpp/orderbook/data/orders.csv"
 
 -1 "Generated ", string[N], " orders -> ", string outFile;

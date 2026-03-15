@@ -30,9 +30,10 @@ price,qty,side
 ### `price`
 
 - **Type**: IEEE 754 double-precision float
-- **Valid range**: Positive, typically in the range [50.0, 150.0] for a mid of 100.0 with default settings; no hard bounds enforced by the generator
+- **Valid range**: Guaranteed within [MID - PRICE_BAND, MID + PRICE_BAND] = [97.50, 102.50] with default settings
 - **Precision**: Rounded to 2 decimal places (e.g. `100.05`, never `100.053`)
-- **Generation method**: Cumulative random walk starting at `MID` (default 100.0), with per-tick steps drawn from Uniform[-STEP, +STEP] (default STEP = 0.05)
+- **Distribution**: Mean-reverting; prices are concentrated near MID (100.0) with a standard deviation well below PRICE_BAND
+- **Generation method**: Ornstein-Uhlenbeck (OU) mean-reverting walk seeded at MID. Each step reverts toward MID with strength THETA, then adds Uniform[-STEP, +STEP] noise. Prices are subsequently clamped to [MID - PRICE_BAND, MID + PRICE_BAND] as a hard safety net.
 
 ### `qty`
 
@@ -89,8 +90,10 @@ The following constants at the top of `gen_orders.q` control the generated data:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `N` | `1000000` | Number of rows |
-| `MID` | `100.0` | Starting mid-price |
-| `STEP` | `0.05` | Maximum per-tick price move (controls volatility) |
+| `MID` | `100.0` | Starting mid-price and OU reversion target |
+| `STEP` | `0.05` | Per-tick noise amplitude (tick size) |
+| `THETA` | `0.05` | OU reversion strength — higher values pull prices more aggressively back toward MID, producing a tighter price range |
+| `PRICE_BAND` | `2.50` | Hard price band around MID; any price outside [MID - PRICE_BAND, MID + PRICE_BAND] is clamped to the nearest boundary |
 | `QTY_SCALE` | `50.0` | Mean quantity before clamping |
 | `QTY_MAX` | `1000.0` | Maximum quantity per order |
 

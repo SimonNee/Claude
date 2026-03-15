@@ -151,6 +151,31 @@ x~asc x                  / same thing
 
 ## Precision and Floating Point
 
+### Float `f` Suffix Is a REPL Display Convention Only
+
+```q
+/ In the q REPL, a whole-number float is displayed with an 'f' suffix
+q)47.0
+47f          / REPL shows 'f' to disambiguate float from long integer
+
+/ This suffix does NOT appear in CSV output
+save[`:out.csv; ([] label:`wholenumber; price:47.0)]
+/ CSV contains: wholenumber,47   ← no 'f'
+```
+
+**Empirically verified**: floats at 2dp through 7dp, whole-number floats (47.0, 100.0),
+default precision and `P 0` (full precision) mode, and both `save` and `0:` CSV
+serialisation paths all produce clean numeric output with no `f` suffix.
+
+**The correct rule**:
+- The `f` suffix is a **REPL display convention only** — q appends it interactively so
+  you can distinguish `47f` (float) from `47` (long integer)
+- It does NOT appear in CSV output via `save` or `0:`
+- It is NOT precision-related; `\P 0` (full precision) also produces no `f` suffix
+
+**Prior incorrect claim**: An earlier analysis claimed q's `save` appends an `f` suffix
+to whole-number floats. This was wrong and has been corrected by empirical testing.
+
 ### Two-Decimal Check
 
 ```q
@@ -546,6 +571,31 @@ Any match is a bug. Fix by adding text after the `/`.
 
 ---
 
+## Running Shell Commands from Q Scripts
+
+### Idiomatic Pattern: `system "cmd"`
+
+The correct way to invoke a shell command from within a q script is:
+
+```q
+system "sed -i 's/f//g' /path/to/file.csv"
+```
+
+`system` takes a string and executes it in a shell. It is the standard q mechanism for
+delegating to external tools.
+
+**Prefer `system` over**:
+- Spawning a separate wrapper shell script to call external tools
+- q-native string manipulation (`ssr`, `read0`/`0:`) for tasks that external tools
+  handle more cleanly (e.g., bulk in-place text substitution in files)
+
+**When to use `system`**:
+- Post-processing output files with standard Unix tools (`sed`, `awk`, `sort`, etc.)
+- File operations not directly supported by q builtins
+- Any case where the external tool is simpler and more reliable than q string wrangling
+
+---
+
 ## Summary of Most Common Errors
 
 1. **Function calls**: Using `f(x)` instead of `f x` or `f[x]` ← THIS IS #1
@@ -559,6 +609,8 @@ Any match is a bug. Fix by adding text after the `/`.
 9. **Timestamp division**: Division produces float, not timespan
 10. **Keywords as variables**: Using `lower`, `upper`, etc. as variable names
 11. **Bare `/` lines**: A lone `/` line silently activates block comment mode
+12. **Float `f` suffix in CSV**: The `f` suffix is REPL-only; `save` and `0:` never write it
+13. **Shell commands**: Use `system "cmd"` to call external tools; do not spawn wrapper scripts
 
 ---
 
@@ -611,6 +663,14 @@ trade::0#trade                   ← WRONG (becomes type 0h)
 / some text       ← CORRECT (single-line comment)
 / .               ← CORRECT (safe separator)
 /                 ← WRONG! Bare / starts block comment mode — all code below is silently ignored
+
+/ FLOAT f SUFFIX IN CSV
+/ In REPL: 47.0 displays as 47f (disambiguation display only)
+/ In CSV via save or 0:: 47.0 writes as 47 — no f suffix ever
+
+/ SHELL COMMANDS FROM Q
+system "sed -i 's/old/new/g' file.csv"   ← CORRECT (idiomatic)
+/ do NOT spawn a wrapper shell script for this
 ```
 
 ---
