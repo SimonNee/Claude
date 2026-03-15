@@ -68,7 +68,10 @@ int main() {
 
     constexpr bool INSTRUMENT_P          = true;   // set false to eliminate p-tracking at compile time
     constexpr bool INSTRUMENT_TIMESERIES = true;   // set false to eliminate time-series at compile time
+    constexpr bool INSTRUMENT_Q          = true;   // set false to eliminate q-tracking at compile time
     constexpr std::size_t TS_BUCKETS     = 10;     // constexpr → stack-allocated std::array, no heap
+    constexpr std::size_t Q_INTERVAL     = 4096;   // power of 2 → bitwise AND instead of modulo
+    constexpr std::size_t Q_MASK         = Q_INTERVAL - 1;  // compile-time mask
 
     int loaded = 0;
     int malformed = 0;
@@ -76,6 +79,10 @@ int main() {
 
     std::vector<std::size_t> pSamples;
     if constexpr (INSTRUMENT_P) pSamples.reserve(lines.size());
+
+    // ~(1M/4096) * 82 levels ≈ 20K entries — modest heap cost
+    std::vector<std::size_t> qSamples;
+    if constexpr (INSTRUMENT_Q) qSamples.reserve((lines.size() / Q_INTERVAL) * 90);
 
     // Stack-allocated: TS_BUCKETS is constexpr so array size is compile-time
     std::array<uint64_t, TS_BUCKETS + 1> tsMarks{};
@@ -115,6 +122,12 @@ int main() {
                 tsNext += lines.size() / TS_BUCKETS;
             }
         }
+
+        // Bitwise AND — power-of-2 interval avoids modulo in the hot loop
+        if constexpr (INSTRUMENT_Q) {
+            if (((std::size_t)loaded & Q_MASK) == 0)
+                csvBook.sampleLiveCounts(qSamples);
+        }
     }
 
     uint64_t t1 = rdtscp();
@@ -146,6 +159,20 @@ int main() {
                       << "-" << std::setw(3) << ((i + 1) * 10) << "%] : "
                       << (tsMarks[i + 1] - tsMarks[i]) / bucketOrders << "\n";
         }
+    }
+
+    if constexpr (INSTRUMENT_Q) {
+        std::sort(qSamples.begin(), qSamples.end());
+        double qMean = (double)std::accumulate(qSamples.begin(), qSamples.end(), 0ULL) / qSamples.size();
+        std::cout << "\n--- Live orders per level (q) sampled every " << Q_INTERVAL << " orders ---\n";
+        std::cout << "  samples : " << qSamples.size() << "\n";
+        std::cout << "  min     : " << qSamples.front() << "\n";
+        std::cout << "  mean    : " << std::fixed << std::setprecision(1) << qMean << "\n";
+        std::cout << "  p50     : " << qSamples[qSamples.size() * 50 / 100] << "\n";
+        std::cout << "  p75     : " << qSamples[qSamples.size() * 75 / 100] << "\n";
+        std::cout << "  p95     : " << qSamples[qSamples.size() * 95 / 100] << "\n";
+        std::cout << "  p99     : " << qSamples[qSamples.size() * 99 / 100] << "\n";
+        std::cout << "  max     : " << qSamples.back() << "\n";
     }
     printBook(csvBook);
 

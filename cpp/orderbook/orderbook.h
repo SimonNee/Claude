@@ -25,10 +25,11 @@ struct PriceLevel {
     std::vector<Order> orders;
     std::size_t        head = 0;
 
-    bool         empty()  const { return head >= orders.size(); }
-    Order&       front()        { return orders[head]; }
-    const Order& front()  const { return orders[head]; }
-    void         pop_front()    { ++head; }
+    bool         empty()     const { return head >= orders.size(); }
+    std::size_t  liveCount() const { return orders.size() - head; }
+    Order&       front()           { return orders[head]; }
+    const Order& front()     const { return orders[head]; }
+    void         pop_front()       { ++head; }
     void         push_back(const Order& o) { orders.push_back(o); }
 };
 
@@ -49,6 +50,12 @@ public:
     // Instrumentation — active price level counts
     std::size_t bidLevels() const { return bids.size(); }
     std::size_t askLevels() const { return asks.size(); }
+
+    // Instrumentation — append live order count per level into out
+    void sampleLiveCounts(std::vector<std::size_t>& out) const {
+        for (const auto& l : bids) out.push_back(l.liveCount());
+        for (const auto& l : asks) out.push_back(l.liveCount());
+    }
 
 private:
     int nextId = 1;
