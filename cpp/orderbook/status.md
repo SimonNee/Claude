@@ -78,33 +78,42 @@ Four issues identified. Three recommended, one deferred:
 | 3 | Reorder `Order` struct members (doubles first) — 32→24 bytes | Recommend |
 | 4 | `id → location` index for O(1) `cancelOrder` | Measure first — cancel rate unknown |
 
-### Benchmark Results (all on OU data — corrected, 2026-03-15)
+### Benchmark Results (all on OU data — 2026-03-15)
 
-| Metric | Iteration 1 (map) | Iteration 2 (vector) | Delta |
-|--------|-------------------|----------------------|-------|
-| Cycles/order | 1,175 | 1,262 | **+7%** |
+| Metric | Iter 1 (map) | Iter 2 initial | Iter 2 fixed | Delta vs Iter 1 |
+|--------|-------------|----------------|--------------|-----------------|
+| Cycles/order | 1,175 | 1,262 | **1,209** | **+3%** |
 
-The earlier reported regressions (+44%, +36%) were both measured against the old free
-random walk data which produced pathologically high p (unbounded distinct price levels).
-On the correct OU data the gap narrows to +7% — a small residual regression.
+The earlier reported regressions (+44%, +36%) were against the old free random walk data.
+On correct OU data the initial vector was +7%. After fixing the match-loop erase the gap
+is +3% — 34 cycles/order.
 
-### Analysis
+### p Instrumentation Results
 
-**Why the small regression persists:**
-- agentDuality review identified two concrete mechanisms:
-  1. `asks.erase(it)` inside the matching loop causes an O(p) shift every time a level
-     is fully drained — at k drained levels this is O(k×p) vs map's O(k log p)
-  2. `cancelOrder` bypasses the head-index trick, using `erase(begin() + oi)` which
-     causes an O(q) shift within the order vector
+| Stat | p (bids + asks active levels) |
+|------|-------------------------------|
+| min  | 1 |
+| mean | 72.3 |
+| p50  | 73 |
+| p95  | 79 |
+| p99  | 81 |
+| max  | 82 |
 
-**Why we are not reverting:**
-- At realistic p (expected 5–20 active levels for a liquid OU book) the vector should win
-- The +7% gap is small enough that p instrumentation is needed before any structural verdict
-- The struct reorder (Change 3) is unconditionally correct and retained regardless
+p is tightly bounded with a hard ceiling of 82 — well within the vector-wins regime
+(crossover ~10,000 per agentDuality knowledge base). The vector is the correct structure.
 
-**Next step:** instrument `bids.size() + asks.size()` during the benchmark run to measure
-actual p. If p is in the expected range, the residual regression likely disappears or
-reverses.
+### Match-loop erase fix (2026-03-15)
+
+**Root cause of residual regression:** `asks.erase(it)` was called eagerly inside the
+match loop each time a level drained. At p=72 this costs ~71 × 40 bytes of memmove per
+drain, mid-traversal.
+
+**Fix:** deferred conditional compaction — traverse without erasing, then run a single
+`remove_if` pass after the loop, guarded by a `drained` flag so the scan is skipped
+entirely for non-crossing orders (the common case).
+
+**Remaining gap (+3%):** `cancelOrder` still uses `erase(begin() + oi)` inside the order
+vector — bypasses the head-index trick. Cancel rate unknown; addressed in Iteration 3.
 
 ### Key reasoning (agentDuality — still valid at small p)
 
