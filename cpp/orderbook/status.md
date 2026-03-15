@@ -186,7 +186,7 @@ have stable heap addresses that warm to L2 over repeated access. Closing the gap
 requires either periodic compaction (reduce dead prefix, lower allocated working set) or
 Iteration 3 techniques (per-phase profiling with `perf annotate` to isolate the hot path).
 
-**Iteration 2 status:** IN PROGRESS — perf stat complete, ready to close out.
+**Iteration 2 status:** COMPLETE
 
 ### Key reasoning (agentDuality — updated after q instrumentation)
 
@@ -197,6 +197,82 @@ Iteration 3 techniques (per-phase profiling with `perf annotate` to isolate the 
 - cancelOrder O(p*q) scan: at q_mean=1,085 × p=72 = ~78K comparisons per cancel — unacceptable
   at production cancel rates (often >90% of order flow). This is the priority fix for Iteration 3.
 - Deque 512-byte minimum chunk waste eliminated; inner match traversal is fully sequential
+
+---
+
+## Iteration 3 — Benchmarks + cancelOrder O(1)
+
+**Status**: IN PROGRESS
+**Date**: 2026-03-15
+
+### What was implemented
+
+**1. id→location index (`orderIndex`)**
+
+Added `std::unordered_map<int, OrderLocation>` as a private member, where:
+```cpp
+struct OrderLocation { Side side; double levelPrice; std::size_t orderIdx; };
+```
+- Inserted when an order rests (post-match, confirmed resting)
+- `orderIdx` is the stable index into `PriceLevel::orders` — valid for the lifetime of the order because lazy deletion never shifts elements
+- Erased when filled (in match loop) or cancelled
+
+**2. Lazy deletion in `cancelOrder`**
+
+Instead of `orders.erase()` (O(q) memmove), cancelled orders are marked with `id=0` (tombstone). No vector shifting. The match loop skips tombstones naturally:
+- `fill = min(order.qty, 0.0) = 0` → no fill
+- `pop_front()` advances head past the tombstone
+
+**3. `liveOrders` counter in `PriceLevel`**
+
+`empty()` and `liveCount()` now use a dedicated counter rather than `orders.size() - head`, which would count tombstones. `cancel_at(oi)` decrements it; `pop_front()` decrements only for live orders (`id != 0`).
+
+**cancelOrder complexity: O(p*q) → O(1)**
+- Map lookup: O(1) average
+- Binary search to level: O(log p) = 7 comparisons at p=82
+- Direct index to order slot: O(1) — no scan
+
+### Benchmark Results (2026-03-15)
+
+Synthetic in-memory workload. OU price walk (same parameters as CSV generator).
+All adds are offset away from mid — no crossing — so every add produces a resting order.
+
+| Operation | N | cycles/op | Notes |
+|-----------|---|-----------|-------|
+| addOrder no-cross | 500,000 | 233 | +12 vs no-index (map insert overhead) |
+| addOrder crossing 1 level | 100,000 | 176 | |
+| addOrder crossing 5 levels | 100,000 | 857 | |
+| **cancelOrder** | **500,000** | **150** | **was 30,946 — 206× improvement** |
+| getBestBid+Ask+Spread (trio) | 1,000,000 | 31 | O(1) front() access |
+| mixed cancel=10% | ~550,000 | 252 | |
+| mixed cancel=50% | ~750,000 | 186 | |
+| mixed cancel=90% | ~950,000 | 160 | |
+
+**Key finding — cancel rate no longer affects throughput.** Mixed workload cycles/op is
+flat at 160–252 regardless of cancel rate. With O(1) cancel, high cancel rates produce
+more ops in the timing window (more work done), which is why 90% cancel shows lower
+cycles/op than 10% (the add-dominated case with more no-cross overhead).
+
+**addOrder no-cross overhead (+12 cycles)** is the cost of the extra `orderIdx` field
+in the `orderIndex` map insert. Acceptable trade for 206× cancel improvement.
+
+### Design iterations during Iteration 3
+
+Three cancel implementations were tried before arriving at the final design:
+
+| Attempt | Approach | cancelOrder cycles | Problem |
+|---------|----------|-------------------|---------|
+| 1 | O(p*q) nested scan (Iter 2) | 30,946 | Baseline — unacceptable |
+| 2 | Map + linear scan within level | ~30,946 | Map helps lookup but erase-shift still O(q) |
+| 3 | Map + lazy deletion (no orderIdx) | 36,200 | Tombstones accumulate; scan degrades O(k) |
+| **4** | **Map + orderIdx + lazy deletion** | **150** | **O(1) — direct jump, no scan, no shift** |
+
+Attempt 3 (lazy deletion without stored index) was worse than the original in the
+isolated cancel benchmark because tombstones accumulate without fills to clear them,
+and the linear scan past k tombstones grows O(k) per cancel.
+
+Storing `orderIdx` in the map is safe because lazy deletion never shifts elements —
+indices are stable for the lifetime of a resting order.
 
 ---
 
