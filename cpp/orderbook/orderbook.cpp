@@ -143,3 +143,98 @@ std::optional<double> OrderBook::getSpread() const {
     if (!bid || !ask) return std::nullopt;
     return *ask - *bid;
 }
+
+// ---------------------------------------------------------------------------
+// ASM variants — C++ baseline. Bodies replaced with inline ASM by agentASM.
+// ---------------------------------------------------------------------------
+
+int OrderBook::addOrder_asm(Side side, double price, double quantity) {
+    Order order{price, quantity, nextId++, side};
+
+    if (side == Side::Buy) {
+        matchBuy_asm(order);
+        if (order.quantity > 0.0) {
+            auto it = findBidLevel(bids, price);
+            if (it != bids.end() && it->price == price) {
+                std::size_t idx = it->orders.size();
+                it->push_back(order);
+                orderIndex[order.id] = {Side::Buy, price, idx};
+            } else {
+                PriceLevel level;
+                level.price = price;
+                level.push_back(order);
+                bids.insert(it, std::move(level));
+                orderIndex[order.id] = {Side::Buy, price, 0};
+            }
+        }
+    } else {
+        matchSell_asm(order);
+        if (order.quantity > 0.0) {
+            auto it = findAskLevel(asks, price);
+            if (it != asks.end() && it->price == price) {
+                std::size_t idx = it->orders.size();
+                it->push_back(order);
+                orderIndex[order.id] = {Side::Sell, price, idx};
+            } else {
+                PriceLevel level;
+                level.price = price;
+                level.push_back(order);
+                asks.insert(it, std::move(level));
+                orderIndex[order.id] = {Side::Sell, price, 0};
+            }
+        }
+    }
+
+    return order.id;
+}
+
+void OrderBook::matchBuy_asm(Order& order) {
+    bool drained = false;
+    for (auto& level : asks) {
+        if (order.quantity <= 0.0 || level.price > order.price) break;
+
+        while (!level.empty() && order.quantity > 0.0) {
+            Order& resting = level.front();
+            double fill = std::min(order.quantity, resting.quantity);
+            order.quantity   -= fill;
+            resting.quantity -= fill;
+            if (resting.quantity == 0.0) {
+                orderIndex.erase(resting.id);
+                level.pop_front();
+            }
+        }
+        if (level.empty()) drained = true;
+    }
+    if (drained)
+        asks.erase(std::remove_if(asks.begin(), asks.end(),
+            [](const PriceLevel& pl) { return pl.empty(); }), asks.end());
+}
+
+void OrderBook::matchSell_asm(Order& order) {
+    bool drained = false;
+    for (auto& level : bids) {
+        if (order.quantity <= 0.0 || level.price < order.price) break;
+
+        while (!level.empty() && order.quantity > 0.0) {
+            Order& resting = level.front();
+            double fill = std::min(order.quantity, resting.quantity);
+            order.quantity   -= fill;
+            resting.quantity -= fill;
+            if (resting.quantity == 0.0) {
+                orderIndex.erase(resting.id);
+                level.pop_front();
+            }
+        }
+        if (level.empty()) drained = true;
+    }
+    if (drained)
+        bids.erase(std::remove_if(bids.begin(), bids.end(),
+            [](const PriceLevel& pl) { return pl.empty(); }), bids.end());
+}
+
+std::optional<double> OrderBook::getSpread_asm() const {
+    auto bid = getBestBid();
+    auto ask = getBestAsk();
+    if (!bid || !ask) return std::nullopt;
+    return *ask - *bid;
+}

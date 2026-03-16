@@ -61,6 +61,10 @@ public:
     // Returns ask - bid. nullopt if either side is empty.
     std::optional<double> getSpread() const;
 
+    // ASM variants — identical logic for now; bodies replaced with inline ASM in Iteration 4.
+    int                   addOrder_asm(Side side, double price, double quantity);
+    std::optional<double> getSpread_asm() const;
+
     // Instrumentation — active price level counts
     std::size_t bidLevels() const { return bids.size(); }
     std::size_t askLevels() const { return asks.size(); }
@@ -89,4 +93,6 @@ private:
 
     void matchBuy(Order& order);
     void matchSell(Order& order);
+    void matchBuy_asm(Order& order);
+    void matchSell_asm(Order& order);
 };
