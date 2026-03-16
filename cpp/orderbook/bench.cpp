@@ -318,6 +318,76 @@ static void benchCross5Levels_asm(int n) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Iteration 5 — prefix-scan two-pass vs scalar one-pass
+// ---------------------------------------------------------------------------
+
+static void benchCross1Level_pscan(int n) {
+    // scalar
+    {
+        OrderBook book;
+        for (int i = 0; i < n / 10; ++i) {
+            book.addOrder(Side::Sell, 100.05, 1.0);
+            book.addOrder(Side::Buy,  100.05, 1.0);
+        }
+        uint64_t t0 = rdtscp();
+        for (int i = 0; i < n; ++i) {
+            book.addOrder(Side::Sell, 100.05, 1.0);
+            book.addOrder(Side::Buy,  100.05, 1.0);
+        }
+        uint64_t t1 = rdtscp();
+        printResult("addOrder cross-1L scalar", n, t1 - t0);
+    }
+    // prefix-scan
+    {
+        OrderBook book;
+        for (int i = 0; i < n / 10; ++i) {
+            book.addOrder_pscan(Side::Sell, 100.05, 1.0);
+            book.addOrder_pscan(Side::Buy,  100.05, 1.0);
+        }
+        uint64_t t0 = rdtscp();
+        for (int i = 0; i < n; ++i) {
+            book.addOrder_pscan(Side::Sell, 100.05, 1.0);
+            book.addOrder_pscan(Side::Buy,  100.05, 1.0);
+        }
+        uint64_t t1 = rdtscp();
+        printResult("addOrder cross-1L pscan ", n, t1 - t0);
+    }
+}
+
+static void benchCross5Levels_pscan(int n) {
+    // scalar
+    {
+        OrderBook book;
+        for (int i = 0; i < n / 10; ++i) {
+            for (int l = 1; l <= 5; ++l) book.addOrder(Side::Sell, 100.0 + l * 0.05, 1.0);
+            book.addOrder(Side::Buy, 100.30, 5.0);
+        }
+        uint64_t t0 = rdtscp();
+        for (int i = 0; i < n; ++i) {
+            for (int l = 1; l <= 5; ++l) book.addOrder(Side::Sell, 100.0 + l * 0.05, 1.0);
+            book.addOrder(Side::Buy, 100.30, 5.0);
+        }
+        uint64_t t1 = rdtscp();
+        printResult("addOrder cross-5L scalar", n, t1 - t0);
+    }
+    // prefix-scan
+    {
+        OrderBook book;
+        for (int i = 0; i < n / 10; ++i) {
+            for (int l = 1; l <= 5; ++l) book.addOrder_pscan(Side::Sell, 100.0 + l * 0.05, 1.0);
+            book.addOrder_pscan(Side::Buy, 100.30, 5.0);
+        }
+        uint64_t t0 = rdtscp();
+        for (int i = 0; i < n; ++i) {
+            for (int l = 1; l <= 5; ++l) book.addOrder_pscan(Side::Sell, 100.0 + l * 0.05, 1.0);
+            book.addOrder_pscan(Side::Buy, 100.30, 5.0);
+        }
+        uint64_t t1 = rdtscp();
+        printResult("addOrder cross-5L pscan ", n, t1 - t0);
+    }
+}
+
 int main() {
     constexpr int N_STD    = 500000;
     constexpr int N_CROSS  = 100000;
@@ -339,6 +409,11 @@ int main() {
     benchGetSpread_asm(N_CHEAP);
     benchCross1Level_asm(N_CROSS);
     benchCross5Levels_asm(N_CROSS);
+
+    std::cout << "\n=== Iteration 5 — Prefix-scan two-pass vs scalar ===\n\n";
+
+    benchCross1Level_pscan(N_CROSS);
+    benchCross5Levels_pscan(N_CROSS);
 
     return 0;
 }

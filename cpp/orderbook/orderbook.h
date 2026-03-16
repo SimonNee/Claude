@@ -64,6 +64,10 @@ public:
     int                   addOrder_asm(Side side, double price, double quantity);
     std::optional<double> getSpread_asm() const;
 
+    // Prefix-scan variant — two-pass: read-only scan to find crossing index, then update.
+    // Benchmarked to assess whether separating read/write phases beats the scalar loop.
+    int addOrder_pscan(Side side, double price, double quantity);
+
     // Instrumentation — active price level counts
     std::size_t bidLevels() const { return bids.size(); }
     std::size_t askLevels() const { return asks.size(); }
@@ -96,4 +100,6 @@ private:
     void matchSell(Order& order);
     void matchBuy_asm(Order& order);
     void matchSell_asm(Order& order);
+    void matchBuy_pscan(Order& order);
+    void matchSell_pscan(Order& order);
 };

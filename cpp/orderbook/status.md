@@ -458,6 +458,39 @@ within a single level's order vector is the genuine SIMD candidate — scan one 
 (quantity) across many contiguous objects within a level. Atomics remain a separate
 concern and are included in Iteration 5 alongside SIMD.
 
+### agentASM pre-flight — inner fill loop SIMD (rejected)
+
+agentASM identified four independent blockers preventing auto-vectorisation:
+
+1. **Carried dependency** on `order.quantity` — each iteration depends on the previous
+2. **Data-dependent exit** — trip count unknown before loop starts
+3. **24-byte stride** — SSE2 cannot load two adjacent `quantity` fields; gather costs more than scalar
+4. **Aliasing ambiguity** — compiler cannot prove `&order` and `&resting` don't alias
+
+The 24-byte stride is the structural wall: SSE2 needs 2 loads for 2 doubles (no gain over
+scalar); AVX2 gathers are 5–7 cycles per 4 doubles vs ~2 cycles for 4 scalar `movsd`. The
+compiler's scalar output is already near-optimal for this layout.
+
+The carried dependency is reformulable via a **prefix-sum two-pass** approach: read-only
+scan (Phase 1) finds the crossing index without writing anything; sequential update pass
+(Phase 2) applies fills. This was implemented and benchmarked.
+
+### Prefix-scan benchmark result (2026-03-16)
+
+| | Scalar | Prefix-scan | Delta |
+|--|--|--|--|
+| cross-1L | 133 | 120 | −10% |
+| cross-5L | 595 | 637 | +7% |
+
+**Null result — within run-to-run variance.** The two-pass overhead (reading data twice)
+exactly offsets any OOO scheduling benefit from the read-only Phase 1. Phase 2 retains the
+same serial carried dependency as the scalar loop. Neither variant wins meaningfully.
+
+**Conclusion**: the scalar fill loop is already at the ceiling for the current `Order`
+layout (24-byte stride, AoS). SIMD on the inner fill loop requires a data layout change
+(parallel contiguous `quantity` array at stride 8) to be viable. That is a structural
+change for a future iteration. Iteration 5 pivots to **Atomics** only.
+
 ---
 
 ## Data Generator
