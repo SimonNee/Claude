@@ -425,6 +425,41 @@ direct evidence available for performance decisions. It removes guesswork.
 
 ---
 
+## Iteration 5 — SIMD inner fill loop + Atomics
+
+**Status**: IN PROGRESS
+**Date**: 2026-03-16
+
+### agentDuality pre-flight — SIMD outer price scan (rejected)
+
+Initial Iteration 5 scope was SIMD price-level scan (`cmppd`) on the outer matching loop.
+agentDuality analysis rejected this before any code was written.
+
+**Verdict: do not recommend.**
+
+| Approach | Cost | vs scalar (k=1–5) |
+|----------|------|-------------------|
+| Gather (current AoS, 48-byte stride) | 147–420 cycles just to load prices | 7–15× slower |
+| SoA packed SIMD | ~26–73 cycles full sweep, crossover at k>15 | loses for k<15 |
+| Scalar early-exit | ~10–20 cycles | baseline |
+
+Root causes:
+- The outer loop is an **early-exit scan** — exits after k=1–5 levels. SIMD cannot express
+  early exit without serialising back to scalar, negating throughput advantage.
+- `vgatherqpd` at 48-byte stride costs 7–20 cycles per 4-element gather — more than the
+  entire scalar path for the common case.
+- SoA crossover (k>15–20) is structurally unreachable: the OU price band is 5 ticks wide.
+- SoA doubles write amplification on `addOrder no-cross` — the dominant operation.
+- agentDuality Pitfall 8: price field is never scanned independently — it always gates
+  immediate access to orders/head/liveOrders. AoS is correct here.
+
+**Redirected target**: the **inner fill loop**, where q_mean=1,085 orders at 24-byte stride
+within a single level's order vector is the genuine SIMD candidate — scan one field
+(quantity) across many contiguous objects within a level. Atomics remain a separate
+concern and are included in Iteration 5 alongside SIMD.
+
+---
+
 ## Data Generator
 
 **Status**: WORKING
