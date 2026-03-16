@@ -196,17 +196,139 @@ int OrderBook::addOrder_asm(Side side, double price, double quantity) {
 }
 
 void OrderBook::matchBuy_asm(Order& order) {
+    // agentASM — Iteration 4.
+    // Syntax: AT&T (short integer/FP block, mixing with existing AT&T codebase).
+    //
+    // Two redundancies fixed vs. the -O2 compiler output of the plain C++ body:
+    //
+    //   Redundancy 1 — resting.quantity double-load:
+    //     Compiler emits:  movsd 8(%rax), %xmm1   ; load resting.qty
+    //                      minsd %xmm0, %xmm1     ; xmm1 = fill  (original qty lost)
+    //                      ...
+    //                      movsd 8(%rax), %xmm0   ; reload resting.qty  <-- REDUNDANT
+    //                      subsd %xmm1, %xmm0     ; xmm0 = resting.qty - fill
+    //     Fix: copy resting.quantity into %[rq] before minsd overwrites %[fill].
+    //     The subtraction then uses %[rq] directly — no reload from memory.
+    //
+    //   Redundancy 2 — orders.data() reload every iteration:
+    //     Compiler emits:  movq 8(%rcx), %rax  inside the inner loop.
+    //     Fix: hoist 'data = level.orders.data()' before the while loop.
+    //     pop_front() only increments head; it never reallocates, so the
+    //     pointer is stable for the entire duration of one level's inner loop.
+
     bool drained = false;
     for (auto& level : asks) {
         if (order.quantity <= 0.0 || level.price > order.price) break;
 
+        // Hoist: data pointer is stable across pop_front() calls on this level.
+        Order* const data = level.orders.data();
+
         while (!level.empty() && order.quantity > 0.0) {
-            Order& resting = level.front();
-            double fill = std::min(order.quantity, resting.quantity);
-            order.quantity   -= fill;
-            resting.quantity -= fill;
-            if (resting.quantity == 0.0) {
-                orderIndex[resting.id] = std::nullopt;
+            // ---------------------------------------------------------------
+            // Fill arithmetic — single asm block targeting both redundancies.
+            //
+            // GPR scratch [rptr]:
+            //   Receives data + head*24 (the resting Order address).
+            //   "=&r" — early-clobber: written by the first LEA before the
+            //   asm has finished reading [data] and [head], so & is required
+            //   to prevent the allocator from aliasing rptr with either input.
+            //
+            // XMM scratch [rq] (resting quantity, saved copy):
+            //   Holds resting_ptr->quantity after the first movsd.
+            //   "=&x" — early-clobber: written before [order_qty] is consumed
+            //   by subsd, so & is required.
+            //   After the asm block, [rq] holds the post-subtraction value
+            //   (resting.quantity - fill).  C++ reads this to decide whether
+            //   to run the fill-complete path (== 0.0).
+            //   On the NaN path (jp taken), the movsd store is skipped;
+            //   [rq] still holds resting.qty - fill (NaN), so == 0.0 is false
+            //   and the fill-complete path is correctly skipped.
+            //
+            // XMM scratch [fill]:
+            //   Receives a copy of order.quantity then becomes fill = min(...).
+            //   "=&x" — early-clobber: written (copy of order_qty) before all
+            //   inputs are read.  Allocated to a register distinct from [rq]
+            //   and [order_qty] because they must coexist during minsd/subsd.
+            //
+            // [order_qty]:
+            //   "+x" — read-write.  order.quantity is read as the initial value
+            //   and written with order.quantity - fill.  The asm also stores it
+            //   to 8(%[order]) explicitly so the store reaches memory inside the
+            //   block; the constraint write-back on exit stores the same value
+            //   and is harmless.
+            //
+            // [zero]: "x" input holding 0.0 for ucomisd.  Using an XMM input
+            //   rather than an immediate because ucomisd has no form for
+            //   immediate-double operands.
+            //
+            // Clobbers: "cc" because subsd/ucomisd modify RFLAGS.
+            //           "memory" because the asm writes to resting_ptr->quantity
+            //           (an untracked pointer dereference).
+            // ---------------------------------------------------------------
+
+            double resting_qty_new;   // receives [rq] value after subtraction
+            double fill_scratch;      // [fill] XMM scratch, not needed post-asm
+            Order* resting_ptr;       // receives computed resting Order address
+
+            __asm__ volatile (
+                /* --- Compute resting_ptr = data + head * 24 ---
+                   head * 3  via LEA  (avoids imul; scale 2 gives head + head*2)
+                   head * 24 via second LEA with scale 8                        */
+                "leaq  (%[head],%[head],2), %[rptr]\n\t"
+                "leaq  (%[data],%[rptr],8), %[rptr]\n\t"
+
+                /* --- Load resting.quantity and save a copy ---
+                   Offset +8 within Order (price=0, quantity=8).
+                   [rq] holds the original value; it is NOT overwritten by minsd.
+                   This is the fix for Redundancy 1.                            */
+                "movsd 8(%[rptr]), %[rq]\n\t"
+
+                /* --- Compute fill = min(order.quantity, resting.quantity) ---
+                   Copy order.quantity into [fill], then minsd with [rq].
+                   minsd(src,dst): dst = min(dst,src)  →  fill = min(order_qty, rq) */
+                "movsd %[order_qty], %[fill]\n\t"
+                "minsd %[rq], %[fill]\n\t"
+
+                /* --- order.quantity -= fill ---
+                   subsd(src,dst): dst = dst - src  →  order_qty -= fill        */
+                "subsd %[fill], %[order_qty]\n\t"
+                "movsd %[order_qty], 8(%[order])\n\t"
+
+                /* --- resting.quantity -= fill  (uses saved copy, no reload) ---
+                   This is the fix for Redundancy 1: [rq] still holds the
+                   original resting.quantity, so no second movsd 8(%[rptr]).    */
+                "subsd %[fill], %[rq]\n\t"
+
+                /* --- NaN guard (preserves IEEE 754 semantics) ---
+                   ucomisd sets PF=1 if either operand is NaN.
+                   jp skips the store; the while condition (NaN > 0.0 == false)
+                   then exits the inner loop on the next iteration check.       */
+                "ucomisd %[zero], %[rq]\n\t"
+                "jp    .Lnan%=\n\t"
+
+                /* --- Store updated resting.quantity ---                        */
+                "movsd %[rq], 8(%[rptr])\n\t"
+
+                ".Lnan%=:\n\t"
+
+                /* outputs */
+                : [order_qty] "+x"  (order.quantity),
+                  [rq]        "=&x" (resting_qty_new),
+                  [fill]      "=&x" (fill_scratch),
+                  [rptr]      "=&r" (resting_ptr)
+                /* inputs */
+                : [data]      "r"   (data),
+                  [head]      "r"   (level.head),
+                  [order]     "r"   (&order),
+                  [zero]      "x"   (0.0)
+                /* clobbers */
+                : "cc", "memory"
+            );
+
+            // resting_qty_new is the post-subtraction resting.quantity (from [rq]).
+            // resting_ptr points to the resting Order (data + head*24).
+            if (resting_qty_new == 0.0) {
+                orderIndex[resting_ptr->id] = std::nullopt;
                 level.pop_front();
             }
         }

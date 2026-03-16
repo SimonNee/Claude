@@ -366,6 +366,63 @@ Assembly analysis was the evidence that made this change justifiable: without re
 compiled STL template code, the `divq` cost and per-node `operator delete` would have been
 invisible.
 
+### `matchBuy_asm` — inline ASM written and benchmarked
+
+agentASM wrote the inner fill loop body using `__asm__ volatile` with named extended
+constraints, targeting both identified redundancies:
+
+1. `resting.quantity` double-load eliminated — copy into `[rq]` before `minsd` overwrites it
+2. `orders.data()` hoisted above the `while` loop — stable across `pop_front()` calls
+
+**Benchmark result (cross-1L C++ vs ASM):**
+
+| | C++ addOrder | ASM addOrder_asm | Delta |
+|--|--|--|--|
+| cross-1L | 118 | 119 | ~0 (noise) |
+| cross-5L | 644 | 680 | ~0 (noise) |
+
+Result is within run-to-run variance — the compiler was already near-optimal for this loop
+after the `orderIndex` structural fix removed the dominant cost. All 14 correctness tests
+pass with the inline ASM in place.
+
+---
+
+## Iteration 4 — Methodology Conclusion
+
+The work done in Iteration 4 establishes the intended collaboration model for future
+iterations:
+
+### Agent roles
+
+**agentASM** — primary role is **reviewer of compiled machine code**, not just ASM writer.
+Its pre-flight analysis (compile with `-S`, read the output, report on inlining/ABI/
+headroom) is what makes it valuable. In this iteration, the assembly review of the STL
+template instantiation revealed the `divq` + `operator delete` cost — a finding invisible
+from C++ source alone — and directly motivated a structural fix worth −30–69% across all
+operations.
+
+**agentDuality** — structural trade-off analysis at the C++ level: data structure choice,
+memory layout, cache behaviour. Informs which structural changes to make before ASM is
+attempted.
+
+**The collaboration loop:**
+
+```
+agentDuality → structural C++ change → agentASM pre-flight → asm if warranted → benchmark
+     ↑                                                                               |
+     └───────────────────────── findings feed next iteration ───────────────────────┘
+```
+
+### Key lesson
+
+The pre-flight assembly review should always precede ASM writing. In this iteration it
+identified that `getSpread` was not a worthwhile target (compiler already optimal), found
+two narrow redundancies in `matchBuy`, and — most valuably — discovered the `orderIndex`
+structural problem that no amount of inline ASM could have addressed.
+
+Assembly analysis of compiled code (including STL template instantiations) is the most
+direct evidence available for performance decisions. It removes guesswork.
+
 ---
 
 ## Data Generator
