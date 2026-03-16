@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -88,8 +87,10 @@ private:
     };
 
     // O(1) cancel lookup: id → exact location.
-    // Inserted when an order rests; erased when filled or cancelled.
-    std::unordered_map<int, OrderLocation> orderIndex;
+    // Direct-index vector: orderIndex[id] holds the location while the order rests.
+    // Avoids std::unordered_map's divq (prime rehash policy) and per-node operator delete.
+    // IDs are sequential from 1; vector grows as needed and slots are reset to nullopt on use.
+    std::vector<std::optional<OrderLocation>> orderIndex;
 
     void matchBuy(Order& order);
     void matchSell(Order& order);

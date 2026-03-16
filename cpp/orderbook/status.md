@@ -277,6 +277,97 @@ indices are stable for the lifetime of a resting order.
 
 ---
 
+## Iteration 4 — agentASM Pre-flight Analysis
+
+**Status**: IN PROGRESS
+**Date**: 2026-03-16
+**Tag**: `iter-4-pre-asm`
+
+### Method
+
+Before writing any inline ASM, compile with `-S` and give agentASM the compiler-generated
+assembly for each candidate function. agentASM reports on: inlining decisions, ABI/calling
+convention, stack usage, and whether meaningful headroom exists. Only proceed to hand-written
+ASM if analysis confirms a worthwhile target.
+
+### Candidate 1 — `getSpread_asm`
+
+**Verdict: not a worthwhile ASM target.**
+
+The compiler already inlined both `getBestBid` and `getBestAsk` into `getSpread`. The hot
+path is 9 instructions of near-irreducible work. The only overhead is 3 instructions of
+`std::optional` exit normalisation dictated by the calling convention — inline ASM cannot
+change the return ABI without changing the signature.
+
+### Candidate 2 — `matchBuy_asm` inner loop
+
+**Verdict: narrow target — 2 improvable redundancies in the fill arithmetic.**
+
+Two redundancies identified by assembly inspection:
+
+1. **`resting.quantity` double-load**: loaded into `xmm1` for `minsd`, then immediately
+   reloaded from memory for the subtraction. A spare XMM register before `minsd` eliminates
+   this. Saving: ~1 load (~4 cycles) per fill iteration.
+
+2. **`orders.data()` reloaded every inner iteration**: `movq 8(%r12), %rax` inside `.L340`
+   is not hoisted out of the inner loop. The pointer cannot change during filling (no
+   reallocation from `pop_front`). Hoisting saves ~1 load per iteration.
+
+Combined: ~2 loads × ~4 cycles = ~8 cycles per fill iteration on the partial-fill hot path.
+
+### Assembly finding — `orderIndex.erase` is the real bottleneck
+
+**Source**: assembly analysis of the compiled STL template instantiation
+(`_M_erase.isra.0` + `_M_erase_inner`, lines 1291–1383 and 1211–1287 of `orderbook.s`).
+
+| Component | Cycles (warm cache) | Root cause |
+|-----------|---------------------|------------|
+| 3× `divq` | ~120–180 | `_Prime_rehash_policy` — prime bucket count, cannot use bitmask |
+| `operator delete` (tcache) | ~50–100 | node-based allocation — every erase frees a heap node |
+| Pointer chase + key compare | ~8–20 | separate chaining, 1 dereference typical |
+| **Total** | **~185–315** | |
+
+`divq` (64-bit unsigned divide) costs 35–90 cycles and is not pipelined. Three occur per
+erase: two in the lookup/chain-walk phase, one in the unlink phase. This is a direct
+consequence of `libstdc++`'s `_Prime_rehash_policy` — prime bucket counts prevent the
+`% bucket_count` from being strength-reduced to a bitmask.
+
+`operator delete` is called on every erase because `std::unordered_map` is node-based —
+each entry is a separately heap-allocated 40-byte struct. Even a tcache hit costs 50–100
+cycles and pollutes L1/L2 with allocator metadata.
+
+**Inline ASM cannot help.** The cost is structural — it lives inside compiled STL template
+code that agentASM cannot reach. The fix is replacing the container.
+
+### Structural fix: replace `std::unordered_map` with a flat direct-index array
+
+**Implemented**: `std::vector<std::optional<OrderLocation>>` indexed directly by order ID.
+
+Order IDs are dense sequential integers starting from 1 (`nextId` increments from 1).
+No hash function, no division, no heap allocation per entry. Vector grows with `resize`
+on insert; slots reset to `std::nullopt` on erase.
+
+### Benchmark Results (2026-03-16)
+
+| Operation | unordered_map | flat array | Delta |
+|-----------|--------------|------------|-------|
+| addOrder no-cross | 233 | 158 | −32% |
+| addOrder cross-1L | 177 | 125 | −29% |
+| addOrder cross-5L | 888 | 743 | −16% |
+| **cancelOrder** | **156** | **48** | **−69%** |
+| mixed cancel=10% | 259 | 182 | −30% |
+| mixed cancel=50% | 198 | 137 | −31% |
+| mixed cancel=90% | 161 | 109 | −32% |
+
+`cancelOrder` dropped from 156 → 48 cycles (3.25×) — the `divq` × 3 and `operator delete`
+eliminated entirely. All other operations improved ~30% from removal of map insert overhead.
+
+Assembly analysis was the evidence that made this change justifiable: without reading the
+compiled STL template code, the `divq` cost and per-node `operator delete` would have been
+invisible.
+
+---
+
 ## Data Generator
 
 **Status**: WORKING

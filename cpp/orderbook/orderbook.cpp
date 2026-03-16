@@ -26,12 +26,14 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
             if (it != bids.end() && it->price == price) {
                 std::size_t idx = it->orders.size();
                 it->push_back(order);
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Buy, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 bids.insert(it, std::move(level));
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Buy, price, 0};
             }
         }
@@ -42,12 +44,14 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
             if (it != asks.end() && it->price == price) {
                 std::size_t idx = it->orders.size();
                 it->push_back(order);
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Sell, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 asks.insert(it, std::move(level));
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Sell, price, 0};
             }
         }
@@ -70,7 +74,7 @@ void OrderBook::matchBuy(Order& order) {
             order.quantity   -= fill;
             resting.quantity -= fill;
             if (resting.quantity == 0.0) {
-                orderIndex.erase(resting.id);
+                orderIndex[resting.id] = std::nullopt;
                 level.pop_front();
             }
         }
@@ -94,7 +98,7 @@ void OrderBook::matchSell(Order& order) {
             order.quantity   -= fill;
             resting.quantity -= fill;
             if (resting.quantity == 0.0) {
-                orderIndex.erase(resting.id);
+                orderIndex[resting.id] = std::nullopt;
                 level.pop_front();
             }
         }
@@ -106,10 +110,9 @@ void OrderBook::matchSell(Order& order) {
 }
 
 bool OrderBook::cancelOrder(int id) {
-    auto mapIt = orderIndex.find(id);
-    if (mapIt == orderIndex.end()) return false;
+    if (id <= 0 || id >= (int)orderIndex.size() || !orderIndex[id]) return false;
 
-    auto [side, levelPrice, orderIdx] = mapIt->second;
+    auto [side, levelPrice, orderIdx] = *orderIndex[id];
     auto& levels = (side == Side::Buy) ? bids : asks;
 
     auto levelIt = (side == Side::Buy)
@@ -117,13 +120,13 @@ bool OrderBook::cancelOrder(int id) {
         : findAskLevel(levels, levelPrice);
 
     if (levelIt == levels.end() || levelIt->price != levelPrice) {
-        orderIndex.erase(mapIt);
+        orderIndex[id] = std::nullopt;
         return false;
     }
 
-    levelIt->cancel_at(mapIt->second.orderIdx);   // O(1) direct index — no scan, no shift
+    levelIt->cancel_at(orderIdx);   // O(1) direct index — no scan, no shift
     if (levelIt->empty()) levels.erase(levelIt);
-    orderIndex.erase(mapIt);
+    orderIndex[id] = std::nullopt;
     return true;
 }
 
@@ -158,12 +161,14 @@ int OrderBook::addOrder_asm(Side side, double price, double quantity) {
             if (it != bids.end() && it->price == price) {
                 std::size_t idx = it->orders.size();
                 it->push_back(order);
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Buy, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 bids.insert(it, std::move(level));
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Buy, price, 0};
             }
         }
@@ -174,12 +179,14 @@ int OrderBook::addOrder_asm(Side side, double price, double quantity) {
             if (it != asks.end() && it->price == price) {
                 std::size_t idx = it->orders.size();
                 it->push_back(order);
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Sell, price, idx};
             } else {
                 PriceLevel level;
                 level.price = price;
                 level.push_back(order);
                 asks.insert(it, std::move(level));
+                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
                 orderIndex[order.id] = {Side::Sell, price, 0};
             }
         }
@@ -199,7 +206,7 @@ void OrderBook::matchBuy_asm(Order& order) {
             order.quantity   -= fill;
             resting.quantity -= fill;
             if (resting.quantity == 0.0) {
-                orderIndex.erase(resting.id);
+                orderIndex[resting.id] = std::nullopt;
                 level.pop_front();
             }
         }
@@ -221,7 +228,7 @@ void OrderBook::matchSell_asm(Order& order) {
             order.quantity   -= fill;
             resting.quantity -= fill;
             if (resting.quantity == 0.0) {
-                orderIndex.erase(resting.id);
+                orderIndex[resting.id] = std::nullopt;
                 level.pop_front();
             }
         }
