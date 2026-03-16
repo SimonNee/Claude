@@ -425,9 +425,9 @@ direct evidence available for performance decisions. It removes guesswork.
 
 ---
 
-## Iteration 5 — SIMD inner fill loop + Atomics
+## Iteration 5 — SIMD/layout analysis + Atomics (deferred)
 
-**Status**: IN PROGRESS
+**Status**: COMPLETE
 **Date**: 2026-03-16
 
 ### agentDuality pre-flight — SIMD outer price scan (rejected)
@@ -489,7 +489,17 @@ same serial carried dependency as the scalar loop. Neither variant wins meaningf
 **Conclusion**: the scalar fill loop is already at the ceiling for the current `Order`
 layout (24-byte stride, AoS). SIMD on the inner fill loop requires a data layout change
 (parallel contiguous `quantity` array at stride 8) to be viable. That is a structural
-change for a future iteration. Iteration 5 pivots to **Atomics** only.
+change for a future iteration.
+
+### Atomics — dropped
+
+Atomics were listed in the original Iteration 5 scope without a defined concurrency
+problem. The orderbook is single-threaded — there is no shared state accessed from
+multiple threads, so atomics would protect nothing real. Adding them would be premature.
+
+A meaningful atomics implementation requires a defined concurrency model first (e.g. a
+separate market-data reader thread, a lock-free `nextId` for multi-threaded submission).
+Deferred until a concrete scenario is specified.
 
 ---
 

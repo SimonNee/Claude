@@ -49,7 +49,7 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 
 ## Current Iteration
 
-**4 — agentASM: getSpread + matching loop**
+**5 — COMPLETE (see status.md)**
 
 ## Iteration Summary
 
@@ -59,4 +59,4 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 | 2 | Cache-friendly flat array + agentDuality review | No |
 | 3 | RDTSC benchmarks, O(1) cancelOrder (id→location index + lazy deletion) | No |
 | 4 | agentASM: `getSpread` + matching loop | Yes |
-| 5 | SIMD inner fill loop (quantity scan, 24-byte stride) + Atomics (top-of-book) | Yes |
+| 5 | SIMD/layout analysis — null result; Atomics deferred (no concurrency model defined) | Yes |
