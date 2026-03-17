@@ -24,16 +24,15 @@ static inline double tickToPrice(int tick) {
     return BASE_PRICE + tick * TICK_SIZE;
 }
 
-// Members ordered largest-to-smallest to eliminate padding waste.
-// sizeof(Order) == 24 (was 32 in Iteration 1).
+// Order.price removed in Iteration 7 — price is encoded by the level's slot index.
+// sizeof(Order) == 16 (was 24; was 32 in Iteration 1).
 struct Order {
-    double price;
     double quantity;
     int    id;
     Side   side;
 };
 
-static_assert(sizeof(Order) == 24, "Order layout changed — check struct padding");
+static_assert(sizeof(Order) == 16, "Order layout changed — check struct padding");
 
 // A single price level: a contiguous queue of resting orders.
 // The level's price is encoded by its slot index in bid_levels/ask_levels;

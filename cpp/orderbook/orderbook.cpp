@@ -29,7 +29,7 @@ static inline int highestBit(const uint64_t bits[2]) {
 }
 
 int OrderBook::addOrder(Side side, double price, double quantity) {
-    Order order{price, quantity, nextId++, side};
+    Order order{quantity, nextId++, side};
 
     int tick = priceToTick(price);
 

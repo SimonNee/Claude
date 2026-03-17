@@ -683,7 +683,7 @@ encoded in agentASM's workflow.
 
 ## Iteration 7 — Bitmap Level Index + Order Struct Reduction
 
-**Status**: IN PROGRESS
+**Status**: COMPLETE
 **Date**: 2026-03-17
 
 ### Scope (agentDuality review — 2026-03-17, revised post-context.md — 2026-03-17)
@@ -804,6 +804,32 @@ All operations improved 30–60%. `cancelOrder` at 19 cycles is essentially dire
 dereference + tombstone write — close to the theoretical minimum. Change 2 (Order.price
 removal, 24→16 bytes) is the next step; expected gain on crossing paths where the fill
 loop is L3-bandwidth-bound.
+
+### Commit 2 benchmark results (2026-03-17)
+
+`Order.price` removed — sizeof(Order) 24→16 bytes. Also reduces `OrderLocation` working
+set indirectly (levelPrice double→levelTick int: 24→16 bytes per entry).
+
+| Operation | Commit 1 | Commit 2 | Delta |
+|-----------|----------|----------|-------|
+| addOrder no-cross | 103 | 100 | −3% (noise) |
+| addOrder cross-1L | 69 | 76 | +10% (within variance) |
+| addOrder cross-5L | 457 | 479 | +5% (within variance) |
+| **cancelOrder** | **19** | **14** | **−26%** |
+| getBestBid+Ask+Spread | 40 | 39 | ~0 |
+| mixed cancel=10% | 112 | 116 | +4% (noise) |
+| mixed cancel=50% | 96 | 74 | **−23%** |
+| mixed cancel=90% | 68 | 51 | **−25%** |
+
+The fill loop density improvement (+50% orders/cache line) did not produce the expected
+10–20% gain on crossing paths — cross-1L and cross-5L are flat within variance. The fill
+loop is not L3-bandwidth-bound at current q_mean; the serial carried dependency (quantity
+subtraction) remains the ceiling. The agentASM pre-flight double-load finding (section 5)
+is the remaining inner-loop candidate.
+
+`cancelOrder` and high-cancel mixed workloads improved significantly: smaller `OrderLocation`
+(double levelPrice→int levelTick reduces sizeof from 24→16 bytes) compounds with the Order
+size reduction to lower the `orderIndex` working set.
 
 ### Future flag (not Iteration 7)
 
