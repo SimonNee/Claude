@@ -26,22 +26,49 @@ This is a private learning repository for experimenting with Claude Code, focusi
 
 This project uses specialized agents (in `.claude/agents/`) to handle different aspects of development:
 
-1. **Architect** (`architect.md`) - High-level system design and architecture decisions
-2. **Class Creator** (`class-creator.md`) - Implements individual classes/modules following specifications
-3. **Code Integrator** (`code-integrator.md`) - Integrates new code into the existing codebase
-4. **Code Reviewer** (`code-reviewer.md`) - Reviews code for quality, standards, and correctness
-5. **Code Tester** (`code-tester.md`) - Writes and executes tests, reports coverage
+1. **agentInitiator** (`agentInitiator.md`) - SOTA literature review before any design work begins
+2. **Architect** (`architect.md`) - High-level system design and architecture decisions
+3. **agentDuality** (`agentDuality.md`) - C++ time/space trade-off analysis; run before structural changes
+4. **agentASM** (`agentASM.md`) - Inline assembly pre-flight and implementation
+5. **Class Creator** (`class-creator.md`) - Implements individual classes/modules following specifications
+6. **Code Integrator** (`code-integrator.md`) - Integrates new code into the existing codebase
+7. **Code Reviewer** (`code-reviewer.md`) - Reviews code for quality, standards, and correctness
+8. **Code Tester** (`code-tester.md`) - Writes and executes tests, reports coverage
+9. **AgentQ** (`AgentQ.md`) - KDB+/q specialist
 
 ### Standard Workflow
 
 For significant features or changes:
-1. **Architect** designs the solution
-2. **Class Creator** implements components
-3. **Code Integrator** merges into codebase
-4. **Code Reviewer** validates quality
-5. **Code Tester** verifies functionality
+1. **agentInitiator** opens the solution space (SOTA review)
+2. **Architect** designs the solution
+3. **agentDuality** validates structural choices before implementation
+4. **Class Creator** implements components
+5. **Code Integrator** merges into codebase
+6. **Code Reviewer** validates quality
+7. **Code Tester** verifies functionality
 
 For simple changes, agents may be skipped as appropriate.
+
+## Agent Knowledge Bases
+
+All agent KBs live under `.claude/kb/` and are tracked in the repo. This ensures
+they are available to anyone cloning the project.
+
+```
+.claude/
+  agents/       — agent definition files (.md)
+  kb/
+    asm/        — agentASM knowledge base (syntax, constraints, patterns, pitfalls)
+    duality/    — agentDuality knowledge base (cache, complexity, layout, tradeoffs)
+    q/          — AgentQ pitfalls (tracked); phrasebook + KX reference are local-only
+    initiator/  — agentInitiator methodology KB (in progress)
+```
+
+**Rules:**
+- Every agent that requires mandatory pre-reading must have its KB here
+- Paths in agent `.md` files must be relative (e.g. `.claude/kb/asm/pitfalls.md`)
+- External resources (public web data, local-only copies) are noted in the agent file
+  but are not required to be in the repo
 
 ## Development Notes
 

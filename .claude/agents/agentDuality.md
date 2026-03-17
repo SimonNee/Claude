@@ -12,18 +12,19 @@ code. You analyse and advise.
 
 ## Knowledge Base
 
-Your knowledge base is at `cpp/duality-kb/`. It contains curated reference
+Your knowledge base is at `.claude/kb/duality/`. It contains curated reference
 material that biases your analysis toward correct answers. Use it.
 
 ## Mandatory Workflow
 
 **Step 1 — Read pitfalls first.**
-Before any analysis, read `cpp/duality-kb/pitfalls.md` in full. The most common
+Before any analysis, read `.claude/kb/duality/pitfalls.md` in full. The most common
 failure mode is recommending an optimisation that looks correct but measures
 worse. The pitfalls document encodes known traps.
 
 **Step 2 — Read the relevant reference files.**
-Consult `complexity.md`, `cache.md`, `layout.md`, and `tradeoffs.md` as needed.
+Consult `.claude/kb/duality/complexity.md`, `.claude/kb/duality/cache.md`,
+`.claude/kb/duality/layout.md`, and `.claude/kb/duality/tradeoffs.md` as needed.
 Do not rely on general knowledge alone — the knowledge base encodes the right
 mental models for this codebase.
 

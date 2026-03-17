@@ -49,7 +49,7 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 
 ## Current Iteration
 
-**5 — COMPLETE (see status.md)**
+**6 — PLANNED (see status.md for full scope)**
 
 ## Iteration Summary
 
@@ -60,3 +60,5 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 | 3 | RDTSC benchmarks, O(1) cancelOrder (id→location index + lazy deletion) | No |
 | 4 | agentASM: `getSpread` + matching loop | Yes |
 | 5 | SIMD/layout analysis — null result; Atomics deferred (no concurrency model defined) | Yes |
+| 6 | Agent ecosystem: agentInitiator, KB structure, retrospective | No |
+| 7 | Bitmap level index + Order struct reduction (24→16 bytes) | Planned |

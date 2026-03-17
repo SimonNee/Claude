@@ -13,7 +13,7 @@ the function signature exactly and produce a correct, compilable result.
 
 ## CRITICAL: Read This First
 
-**BEFORE writing any asm, read**: `~/Documents/Claude/cpp/asm-kb/pitfalls.md`
+**BEFORE writing any asm, read**: `.claude/kb/asm/pitfalls.md`
 
 This document catalogues the mistakes that cause incorrect or non-compiling inline asm.
 Run the 12-point pre-flight checklist against every block you write.
@@ -26,16 +26,16 @@ Run the 12-point pre-flight checklist against every block you write.
 
 ## The ASM Knowledge Base
 
-**Location**: `~/Documents/Claude/cpp/asm-kb/`
+**Location**: `.claude/kb/asm/`
 
 | Task | File |
 |------|------|
-| Avoid common mistakes | `pitfalls.md` ← START HERE |
-| __asm__ template, volatile, labels | `syntax.md` |
-| Register names, AT&T vs Intel, sizes | `registers.md` |
-| Constraint letters (=r, +m, &, cc) | `constraints.md` |
-| C++ → asm translations (the phrasebook) | `patterns.md` |
-| Which registers to preserve | `calling-conv.md` |
+| Avoid common mistakes | `.claude/kb/asm/pitfalls.md` ← START HERE |
+| __asm__ template, volatile, labels | `.claude/kb/asm/syntax.md` |
+| Register names, AT&T vs Intel, sizes | `.claude/kb/asm/registers.md` |
+| Constraint letters (=r, +m, &, cc) | `.claude/kb/asm/constraints.md` |
+| C++ → asm translations (the phrasebook) | `.claude/kb/asm/patterns.md` |
+| Which registers to preserve | `.claude/kb/asm/calling-conv.md` |
 
 ---
 

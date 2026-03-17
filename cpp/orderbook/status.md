@@ -503,6 +503,132 @@ Deferred until a concrete scenario is specified.
 
 ---
 
+## Iteration 6 — Agent Ecosystem + Project Infrastructure
+
+**Status**: PLANNED
+**Date**: 2026-03-17
+
+### Scope
+
+The orderbook optimisation work (Iterations 1–5) exposed two process gaps:
+
+1. **No SOTA literature review at project start** — the bitmap/tick-indexed level design
+   is a well-known pattern in low-latency orderbook implementations. It was not considered
+   until Iteration 6 planning because the solution space was never opened before the first
+   design decision was made. All subsequent iterations optimised within a suboptimal frame.
+
+2. **Agent resources are structurally loose** — agentDuality and agentASM have knowledge
+   bases (`duality-kb/`, `asm-kb/`) that ground their analysis. No equivalent resource
+   exists for project initiation. Agent KB files live in ad-hoc locations with no documented
+   ownership or maintenance model.
+
+### Work items
+
+#### 1. Create `agentInitiator`
+
+A new agent responsible for SOTA literature review before any design work begins.
+
+- **Remit**: given a problem domain, survey established patterns and production approaches;
+  output a ranked menu of design options with trade-offs so the architect and agentDuality
+  work from an informed solution space
+- **Not**: a designer, implementer, or trade-off analyser — those remain with architect
+  and agentDuality respectively
+- **Tools**: WebSearch, WebFetch, Read — research only, no code writing
+- **Knowledge base**: process-oriented (methodology, source quality, output format) —
+  not domain-specific, because its domain changes every project
+- **Location**: `.claude/agents/agentInitiator.md` + `agentInitiator-kb/`
+
+#### 2. Tighten agent resource structure
+
+Define and document where agent KBs live, who owns them, and how they are maintained:
+- Audit current KB locations (`duality-kb/`, `asm-kb/`)
+- Establish a consistent directory structure
+- Document the model in `CLAUDE.md` so future agents follow the same pattern
+
+#### 3. Retrospective documentation
+
+Document the lessons from Iterations 1–5 as explicit project knowledge:
+- The SOTA gap and what a pre-project literature review would have changed
+- The agentDuality remit boundary (engineering detail, not architectural options)
+- The agent collaboration model as it actually ran vs how it was documented
+
+### Output
+
+- `.claude/agents/agentInitiator.md`
+- `agentInitiator-kb/` with methodology KB
+- Updated `CLAUDE.md` (agent resource structure)
+- Retrospective note in `status.md`
+
+---
+
+## Iteration 7 — Bitmap Level Index + Order Struct Reduction
+
+**Status**: PLANNED
+**Date**: 2026-03-17
+
+### Scope (agentDuality review — 2026-03-17)
+
+Three synergistic structural changes, ranked by expected impact:
+
+#### Change 1 — Bitmap + fixed `PriceLevel[N_TICKS]` array (highest impact)
+
+Replace `std::vector<PriceLevel> bids/asks` with:
+- `uint64_t bid_bits[2]`, `uint64_t ask_bits[2]` — 128-bit bitset, each bit = one tick
+- `PriceLevel levels[N_TICKS]` — flat array, index = tick integer
+
+**Why the envelope allows it:** price band [97.50, 102.50] = 100 ticks at 0.05 granularity,
+p_max=82 observed. 128-bit bitset covers it with margin; fits in a register.
+
+**Expected gains:**
+- `addOrder` no-cross: eliminates O(log p) binary search (~14 cycles) + O(p) memmove
+  (~82 cycles at p=82). The memmove is ~25–50% of the current 156 cycles/op no-cross cost.
+- `cancelOrder`: level lookup becomes O(1) direct array index — eliminates binary search.
+- `getBestBid/Ask`: BSR/BSF instructions (1 cycle) instead of `front()`.
+- Matching loop: integer tick comparison replaces float comparison.
+
+**Cost:** price-to-tick conversion (~5 cycles for `roundsd`) added at every addOrder/cancel.
+
+#### Change 2 — Remove `Order.price` (24 → 16 bytes)
+
+`Order.price` is stored redundantly in every resting order — the matching loop never reads
+it (it reads `level.price` for the crossing check, not `resting.price`). Removing it:
+- Reduces sizeof(Order): 24 → 16 bytes
+- Improves cache line density: 2.67 → 4.0 orders per 64-byte cache line (+50%)
+- Reduces inner order buffer working set: ~1.88MB → ~1.25MB in L3
+
+Expected gain on crossing paths (addOrder cross-5L at 776 cycles/op): 10–20% if the fill
+loop is L3-cache-bound. Speculative — confirm with benchmark.
+
+#### Change 3 — `int levelTick` in `OrderLocation` (combine with Change 1)
+
+Replace `double levelPrice` in `OrderLocation` with `int levelTick`. With bitmap indexing,
+the tick is the direct array index — level lookup in `cancelOrder` becomes a single
+array dereference with no comparison. This also eliminates the floating-point equality
+fragility in level lookup (latent bug: if price at add and cancel time ever differ by
+floating-point epsilon, the binary search silently fails to find the level).
+
+Reduces sizeof(OrderLocation): 24 → 16 bytes (or smaller with uint16_t). Reduces
+`orderIndex` working set proportionally.
+
+### Agent workflow
+
+```
+agentInitiator — DONE (Iter 6, SOTA review on record)
+agentDuality review — DONE (2026-03-17)
+agentASM pre-flight → compile bitmap design with -S, verify BSR/BSF emission
+Class Creator → implement bitmap + Order struct changes
+Code Integrator → merge, update bench.cpp
+benchmark → compare against Iter 5 baselines
+```
+
+### Deferred (not in scope)
+
+- `orderIndex` ID recycling / compaction: no per-op cycle gain at current N
+- Inner order vector compaction threshold: invisible in current benchmark
+- Atomics: no concurrency model defined
+
+---
+
 ## Data Generator
 
 **Status**: WORKING
