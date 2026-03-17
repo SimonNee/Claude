@@ -165,22 +165,27 @@ static void benchGetBestBidAskSpread(int n) {
     OrderBook book;
     seedBook(book);
 
+    // Accumulate results so LTO cannot eliminate the calls as dead code.
+    // Printed after timing to avoid perturbing the measurement.
+    double sink = 0.0;
+
     // Warm-up
     for (int i = 0; i < n / 10; ++i) {
-        book.getBestBid();
-        book.getBestAsk();
-        book.getSpread();
+        sink += book.getBestBid().value_or(0.0);
+        sink += book.getBestAsk().value_or(0.0);
+        sink += book.getSpread().value_or(0.0);
     }
 
     uint64_t t0 = rdtscp();
     for (int i = 0; i < n; ++i) {
-        book.getBestBid();
-        book.getBestAsk();
-        book.getSpread();
+        sink += book.getBestBid().value_or(0.0);
+        sink += book.getBestAsk().value_or(0.0);
+        sink += book.getSpread().value_or(0.0);
     }
     uint64_t t1 = rdtscp();
 
     printResult("getBestBid+Ask+Spread (per trio)", n, t1 - t0);
+    if (sink == -1.0) std::cout << sink;  // prevent sink optimisation without branching in hot path
 }
 
 static void benchMixed(int n, double cancelRate, const char* label) {

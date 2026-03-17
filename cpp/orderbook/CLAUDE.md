@@ -15,11 +15,16 @@ g++ -std=c++17 -O2 -march=native -Wall -o tests tests.cpp orderbook.cpp && ./tes
 g++ -std=c++17 -O2 -march=native -o main main.cpp orderbook.cpp && ./main
 
 # Benchmarks (Iteration 3+)
-g++ -std=c++17 -O2 -march=native -o bench bench.cpp orderbook.cpp && ./bench
+g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp && ./bench
 ```
 
 Note: `-march=native` added from Iteration 7 — enables TZCNT/LZCNT (replacing BSF/BSR + zero guards)
 and unlocks further ISA-specific optimisations. Required for correct benchmark comparisons from Iter 7 onward.
+
+Note: `-flto` added from Iteration 11 — enables cross-TU inlining (addOrder, matchBuy/matchSell
+inlined into bench call sites). Also exposed a latent benchmark flaw: getBestBid/Ask/Spread
+return values were discarded, allowing LTO to eliminate the calls entirely. Fixed by accumulating
+into a sink variable. Tests are built without `-flto` (correctness, not performance).
 
 ## Iteration Rules
 
@@ -52,7 +57,7 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 
 ## Current Iteration
 
-**8 — COMPLETE (see status.md for full scope)**
+**11 — COMPLETE (see status.md for full scope)**
 
 ## Iteration Summary
 
@@ -66,3 +71,6 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 | 6 | Agent ecosystem: agentContext, KB structure, retrospective | No |
 | 7 | Bitmap level index + Order struct reduction (24→16 bytes) | Yes |
 | 8 | ASM double-load fix: matchBuy_asm/matchSell_asm (-29% cross-5L) | Yes |
+| 9 | Promote ASM to canonical, fix tombstone bug, add test | Yes |
+| 10 | Replace optional<OrderLocation> with sentinel struct (-13% no-cross) | No |
+| 11 | LTO cross-TU inlining + benchmark sink fix (-7% no-cross, -53% getBBA) | No |
