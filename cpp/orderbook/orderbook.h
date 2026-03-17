@@ -107,15 +107,19 @@ private:
 
     struct OrderLocation {
         Side        side;
-        int         levelTick;  // direct index into bid_levels / ask_levels
+        int         levelTick;  // direct index into bid_levels / ask_levels; -1 = empty sentinel
         std::size_t orderIdx;   // index into PriceLevel::orders — stable (no shifting)
     };
 
     // O(1) cancel lookup: id → exact location.
     // Direct-index vector: orderIndex[id] holds the location while the order rests.
     // Avoids std::unordered_map's divq (prime rehash policy) and per-node operator delete.
-    // IDs are sequential from 1; vector grows as needed and slots are reset to nullopt on use.
-    std::vector<std::optional<OrderLocation>> orderIndex;
+    // IDs are sequential from 1; vector grows as needed and slots are reset to kEmptyLocation on use.
+    // kEmptyLocation.levelTick == -1 is the sentinel for "slot is empty"; -1 is outside
+    // the valid tick range [0, N_TICKS) and cannot arise from priceToTick() on a valid price.
+    static constexpr OrderLocation kEmptyLocation{Side::Buy, -1, 0};
+    static_assert(sizeof(OrderLocation) == 16, "OrderLocation layout changed — check sentinel and imulq elimination");
+    std::vector<OrderLocation> orderIndex;
 
     void matchBuy(Order& order, int orderTick);
     void matchSell(Order& order, int orderTick);

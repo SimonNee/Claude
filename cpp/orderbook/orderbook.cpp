@@ -39,7 +39,7 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
             if (bid_levels[tick].empty()) setBit(bid_bits, tick);
             std::size_t idx = bid_levels[tick].orders.size();
             bid_levels[tick].push_back(order);
-            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
+            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1, kEmptyLocation);
             orderIndex[order.id] = {Side::Buy, tick, idx};
         }
     } else {
@@ -48,7 +48,7 @@ int OrderBook::addOrder(Side side, double price, double quantity) {
             if (ask_levels[tick].empty()) setBit(ask_bits, tick);
             std::size_t idx = ask_levels[tick].orders.size();
             ask_levels[tick].push_back(order);
-            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
+            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1, kEmptyLocation);
             orderIndex[order.id] = {Side::Sell, tick, idx};
         }
     }
@@ -87,7 +87,7 @@ void OrderBook::matchBuy(Order& order, int orderTick) {
             );
 
             if (resting.quantity == 0.0) {
-                orderIndex[resting.id] = std::nullopt;
+                orderIndex[resting.id] = kEmptyLocation;
                 level.pop_front();
             }
         }
@@ -124,7 +124,7 @@ void OrderBook::matchSell(Order& order, int orderTick) {
             );
 
             if (resting.quantity == 0.0) {
-                orderIndex[resting.id] = std::nullopt;
+                orderIndex[resting.id] = kEmptyLocation;
                 level.pop_front();
             }
         }
@@ -133,9 +133,9 @@ void OrderBook::matchSell(Order& order, int orderTick) {
 }
 
 bool OrderBook::cancelOrder(int id) {
-    if (id <= 0 || id >= (int)orderIndex.size() || !orderIndex[id]) return false;
+    if (id <= 0 || id >= (int)orderIndex.size() || orderIndex[id].levelTick == -1) return false;
 
-    auto [side, levelTick, orderIdx] = *orderIndex[id];
+    auto [side, levelTick, orderIdx] = orderIndex[id];
     PriceLevel& level = (side == Side::Buy) ? bid_levels[levelTick] : ask_levels[levelTick];
 
     level.cancel_at(orderIdx);
@@ -144,7 +144,7 @@ bool OrderBook::cancelOrder(int id) {
         uint64_t* bits = (side == Side::Buy) ? bid_bits : ask_bits;
         clearBit(bits, levelTick);
     }
-    orderIndex[id] = std::nullopt;
+    orderIndex[id] = kEmptyLocation;
     return true;
 }
 

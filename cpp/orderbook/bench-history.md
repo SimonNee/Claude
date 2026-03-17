@@ -25,6 +25,26 @@ Build: `g++ -std=c++17 -O2 -march=native -o bench bench.cpp orderbook.cpp`
 
 ---
 
+## Iteration 10 — Replace optional<OrderLocation> with sentinel struct
+
+**Date**: 2026-03-17 | **Tag**: `iter-10-complete` (pending)
+
+| Operation | N | cycles/op | vs Iter 9 |
+|-----------|---|-----------|-----------|
+| addOrder no-cross | 500,000 | 84 | −13% |
+| addOrder crossing 1 level | 100,000 | 58 | −19% |
+| addOrder crossing 5 levels | 100,000 | 412 | −11% |
+| cancelOrder | 500,000 | 17 | +4% (variance) |
+| getBestBid+Ask+Spread (per trio) | 1,000,000 | 40 | ~0 |
+| mixed workload cancel=10% | ~550,000 | 102 | ~0 |
+| mixed workload cancel=50% | ~750,000 | 85 | +13% (variance) |
+| mixed workload cancel=90% | ~950,000 | 61 | ~0 |
+
+`imulq` → `sarq $4` on every orderIndex access (24→16 bytes, power-of-two element size).
+Working set reduction: 24→16 bytes/slot, −33% at 500k ids (12MB→8MB).
+
+---
+
 ## Iteration 9 — Promote ASM to canonical + tombstone bug fix
 
 **Date**: 2026-03-17 | **Tag**: `iter-9-complete` (pending)
