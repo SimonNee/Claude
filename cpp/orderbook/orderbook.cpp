@@ -71,7 +71,13 @@ void OrderBook::matchBuy(Order& order, int orderTick) {
             // Fill arithmetic — single load of resting.quantity.
             // xmm_fill receives resting.qty and becomes fill after vminsd.
             // xmm_rest holds the copy so resting.qty can be updated without a second load.
-            double xmm_fill, xmm_rest;
+            //
+            // resting_qty_out: fourth output exposes the post-update value in a register.
+            // The final vmovapd copies xmm_rest into the resting_qty_out register so the
+            // compiler has a live xmm holding the new resting.quantity after the block exits.
+            // The if-check below uses resting_qty_out, eliminating the third memory load
+            // that +m would otherwise force (compiler reloads from (%rax) for vucomisd).
+            double xmm_fill, xmm_rest, resting_qty_out;
             __asm__ volatile (
                 "vmovsd %[resting_qty], %[xmm_fill]\n\t"
                 "vmovsd %[resting_qty], %[xmm_rest]\n\t"
@@ -79,14 +85,16 @@ void OrderBook::matchBuy(Order& order, int orderTick) {
                 "vsubsd %[xmm_fill], %[order_qty], %[order_qty]\n\t"
                 "vsubsd %[xmm_fill], %[xmm_rest], %[xmm_rest]\n\t"
                 "vmovsd %[xmm_rest], %[resting_qty]\n\t"
-                : [order_qty]   "+x" (order.quantity),
-                  [resting_qty] "+m" (resting.quantity),
-                  [xmm_fill]    "=&x"(xmm_fill),
-                  [xmm_rest]    "=&x"(xmm_rest)
+                "vmovapd %[xmm_rest], %[resting_qty_out]\n\t"
+                : [order_qty]      "+x" (order.quantity),
+                  [resting_qty]    "+m" (resting.quantity),
+                  [xmm_fill]       "=&x"(xmm_fill),
+                  [xmm_rest]       "=&x"(xmm_rest),
+                  [resting_qty_out] "=x"(resting_qty_out)
                 : :
             );
 
-            if (resting.quantity == 0.0) {
+            if (resting_qty_out == 0.0) {
                 orderIndex[resting.id] = kEmptyLocation;
                 level.pop_front();
             }
@@ -108,7 +116,9 @@ void OrderBook::matchSell(Order& order, int orderTick) {
             if (resting.id == 0) { level.pop_front(); continue; }
 
             // Fill arithmetic — single load of resting.quantity. See matchBuy.
-            double xmm_fill, xmm_rest;
+            // resting_qty_out: same fix as matchBuy — exposes post-update xmm_rest
+            // in a live register so the zero-check does not reload from memory.
+            double xmm_fill, xmm_rest, resting_qty_out;
             __asm__ volatile (
                 "vmovsd %[resting_qty], %[xmm_fill]\n\t"
                 "vmovsd %[resting_qty], %[xmm_rest]\n\t"
@@ -116,14 +126,16 @@ void OrderBook::matchSell(Order& order, int orderTick) {
                 "vsubsd %[xmm_fill], %[order_qty], %[order_qty]\n\t"
                 "vsubsd %[xmm_fill], %[xmm_rest], %[xmm_rest]\n\t"
                 "vmovsd %[xmm_rest], %[resting_qty]\n\t"
-                : [order_qty]   "+x" (order.quantity),
-                  [resting_qty] "+m" (resting.quantity),
-                  [xmm_fill]    "=&x"(xmm_fill),
-                  [xmm_rest]    "=&x"(xmm_rest)
+                "vmovapd %[xmm_rest], %[resting_qty_out]\n\t"
+                : [order_qty]      "+x" (order.quantity),
+                  [resting_qty]    "+m" (resting.quantity),
+                  [xmm_fill]       "=&x"(xmm_fill),
+                  [xmm_rest]       "=&x"(xmm_rest),
+                  [resting_qty_out] "=x"(resting_qty_out)
                 : :
             );
 
-            if (resting.quantity == 0.0) {
+            if (resting_qty_out == 0.0) {
                 orderIndex[resting.id] = kEmptyLocation;
                 level.pop_front();
             }

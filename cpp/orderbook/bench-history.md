@@ -30,6 +30,33 @@ Build: `g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp`
 
 ---
 
+## Iteration 12 — Eliminate third resting.quantity load (post-ASM zero-check)
+
+**Date**: 2026-03-17 | **Tag**: `iter-12-complete` (pending)
+**Build**: `g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp`
+
+| Operation | N | cycles/op | vs Iter 11 |
+|-----------|---|-----------|------------|
+| addOrder no-cross | 500,000 | 88 | ~0 (variance) |
+| addOrder crossing 1 level | 100,000 | 55 | ~0 (variance) |
+| addOrder crossing 5 levels | 100,000 | 394 | ~0 (variance) |
+| cancelOrder | 500,000 | 11 | ~0 |
+| getBestBid+Ask+Spread (per trio) | 1,000,000 | 18 | ~0 |
+| mixed workload cancel=10% | ~550,000 | 101 | ~0 |
+| mixed workload cancel=50% | ~750,000 | 88 | ~0 |
+| mixed workload cancel=90% | ~950,000 | 62 | ~0 |
+
+Fix: added `resting_qty_out` as a fourth `=x` output from the ASM block. A `vmovapd`
+copies `xmm_rest` into `resting_qty_out` before the block exits, giving the compiler
+a live register holding the post-update value. The `if (resting.quantity == 0.0)` check
+now uses `resting_qty_out` directly — `vucomisd %xmm, %xmm` (register) vs the previous
+`vucomisd (%rax), %xmm` (memory reload). One load eliminated per fill iteration.
+
+No measurable benchmark delta — the saving (one load → register compare) is below the
+noise floor. Fix is correct and the code is structurally cleaner.
+
+---
+
 ## Iteration 11 — LTO cross-TU inlining + benchmark sink fix
 
 **Date**: 2026-03-17 | **Tag**: `iter-11-complete` (pending)
