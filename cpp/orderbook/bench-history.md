@@ -25,6 +25,25 @@ Build: `g++ -std=c++17 -O2 -march=native -o bench bench.cpp orderbook.cpp`
 
 ---
 
+## Iteration 9 — Promote ASM to canonical + tombstone bug fix
+
+**Date**: 2026-03-17 | **Tag**: `iter-9-complete` (pending)
+
+| Operation | N | cycles/op | vs Iter 8 C++ |
+|-----------|---|-----------|---------------|
+| addOrder no-cross | 500,000 | 96 | ~0 |
+| addOrder crossing 1 level | 100,000 | 72 | +4% (variance) |
+| addOrder crossing 5 levels | 100,000 | 463 | ~0 |
+| cancelOrder | 500,000 | 13 | ~0 |
+| getBestBid+Ask+Spread (per trio) | 1,000,000 | 39 | ~0 |
+| mixed workload cancel=10% | ~550,000 | 109 | ~0 |
+| mixed workload cancel=50% | ~750,000 | 75 | ~0 |
+| mixed workload cancel=90% | ~950,000 | 53 | ~0 |
+
+ASM fill arithmetic is now the canonical path. Tombstone skip adds no measurable cost.
+
+---
+
 ## Iteration 8 — ASM double-load fix (matchBuy_asm / matchSell_asm)
 
 **Date**: 2026-03-17 | **Tag**: `iter-8-complete`

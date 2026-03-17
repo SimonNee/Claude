@@ -135,6 +135,27 @@ void test_crossing_order_drains_multiple_levels() {
     pass("test_crossing_order_drains_multiple_levels");
 }
 
+void test_cancel_then_cross_same_level() {
+    // Cancel a resting order, add a second live order at the same level,
+    // then cross. The aggressor must fill only against the live order —
+    // not the tombstone.
+    OrderBook book;
+    int id1 = book.addOrder(Side::Sell, 100.0, 5.0);  // resting ask — will be cancelled
+    book.cancelOrder(id1);                              // tombstone at head
+    int id2 = book.addOrder(Side::Sell, 100.0, 5.0);  // live ask behind the tombstone
+
+    // Crossing buy for 3 — should fill 3 from id2 only
+    book.addOrder(Side::Buy, 100.0, 3.0);
+
+    // 2 units of id2 should remain
+    assert(book.getBestAsk() == 100.0);
+    assert(!book.getBestBid());
+    // id2 partially filled — still cancellable
+    assert(book.cancelOrder(id2));
+    assert(!book.getBestAsk());
+    pass("test_cancel_then_cross_same_level");
+}
+
 void test_sell_does_not_cross_below_price() {
     OrderBook book;
     book.addOrder(Side::Buy, 99.0, 10.0);
@@ -163,6 +184,7 @@ int main() {
     test_price_time_priority_best_ask();
     test_crossing_order_drains_multiple_levels();
     test_sell_does_not_cross_below_price();
+    test_cancel_then_cross_same_level();
 
     std::cout << "\nAll tests passed.\n";
     return 0;

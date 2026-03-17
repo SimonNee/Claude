@@ -70,9 +70,6 @@ public:
     // Insert a limit order. Matches immediately if crossing. Returns assigned id.
     int addOrder(Side side, double price, double quantity);
 
-    // agentASM Iter 8 variant — uses matchBuy_asm/matchSell_asm for bench comparison.
-    int addOrder_asm(Side side, double price, double quantity);
-
     // Remove an order by id. Returns true if found and removed.
     bool cancelOrder(int id);
 
@@ -122,13 +119,4 @@ private:
 
     void matchBuy(Order& order, int orderTick);
     void matchSell(Order& order, int orderTick);
-
-    // agentASM Iteration 8 variants — eliminate double-load of resting.quantity.
-    // The fill arithmetic section is replaced with an __asm__ block that copies
-    // resting.quantity into xmm3 before vminsd destroys xmm1, allowing both
-    // order.quantity and resting.quantity to be updated without a second load.
-    // All surrounding C++ loop structure (bitmap walk, pop_front, orderIndex
-    // update, clearBit on drain) is preserved identically to the originals.
-    void matchBuy_asm(Order& order, int orderTick);
-    void matchSell_asm(Order& order, int orderTick);
 };
