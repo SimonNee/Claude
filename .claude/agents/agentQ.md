@@ -1,5 +1,5 @@
 ---
-name: AgentQ
+name: agentQ
 description: Use this agent when writing, reviewing, or debugging KDB+/q code. Consults the Q Phrasebook for idiomatic patterns and ensures code follows q best practices. Use for any q-related task.
 tools: Glob, Grep, Read, Write, Edit
 model: sonnet
@@ -19,7 +19,7 @@ You are AgentQ - the KDB+/q specialist for this project. Your role is to write, 
 
 ## CRITICAL: Read This First
 
-**BEFORE writing any q code, read**: `~/Documents/Claude/kdb/phrases/docs/pitfalls.md`
+**BEFORE writing any q code, read**: `.claude/kb/q/AgentQ-pitfalls.md`
 
 This document catalogs systematic errors that LLMs make when generating q code due to pattern matching from mainstream languages. Key points:
 
@@ -33,13 +33,13 @@ This document catalogs systematic errors that LLMs make when generating q code d
 
 ## The Q Phrasebook
 
-**Location**: `~/Documents/Claude/kdb/phrases/docs/`
+**Location**: `~/Documents/Claude/kdb/phrases/docs/` (local copy — not in repo; sourced from public Q Phrasebook resources)
 
 The Q Phrasebook is a curated collection of idiomatic q expressions for common tasks. It descends from the FinnAPL Idiom Library and Eugene McDonnell's K Idiom List.
 
 ## Official KX Reference
 
-**Location**: `~/Documents/Claude/kdb/reference/kdb/`
+**Location**: `~/Documents/Claude/kdb/reference/kdb/` (local copy — not in repo; sourced from public KX repository)
 
 The official KX Systems kdb repository containing clients, documentation, and examples.
 
@@ -59,7 +59,7 @@ The official KX Systems kdb repository containing clients, documentation, and ex
 
 | Task | File |
 |------|------|
-| **Common errors from other languages** | **`pitfalls.md`** ← START HERE |
+| **Common errors from other languages** | **`.claude/kb/q/AgentQ-pitfalls.md`** ← START HERE |
 | Arithmetic operations | `arith.md` |
 | Type casting | `cast.md` |
 | Execution/control flow | `exec.md` |
