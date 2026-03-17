@@ -558,7 +558,7 @@ Document the lessons from Iterations 1–5 as explicit project knowledge:
 - The agentDuality remit boundary (engineering detail, not architectural options)
 - The agent collaboration model as it actually ran vs how it was documented
 
-### What was delivered
+### What was delivered (session 1 — 2026-03-17)
 
 - `.claude/agents/agentInitiator.md` — new agent, research-only (WebSearch, WebFetch, Read)
 - `.claude/kb/initiator/methodology.md` — research process, source quality ranking, anti-patterns
@@ -572,6 +572,76 @@ Document the lessons from Iterations 1–5 as explicit project knowledge:
 All three agents (agentASM, agentDuality, AgentQ) converted to relative paths in this session.
 The previous absolute-path failures were likely session-level definition caching artefacts, not
 path resolution failures. Relative paths are the documented standard going forward.
+
+### What was delivered (session 2 — 2026-03-17)
+
+#### agentInitiator → agentContext (renamed and expanded)
+
+The original agentInitiator brief was too narrow — positioned as a one-shot project-start gate.
+Discussion surfaced two gaps:
+
+1. **Anti-bias mandate missing** — the agent should run regardless of what the user already knows.
+   Its value is independence from the user's frame, not novelty of findings.
+2. **Affordance analysis missing** — SOTA survey alone doesn't identify where a problem's specific
+   constraints *amplify* an approach beyond its general case. That's a distinct analytical step.
+
+**Changes made:**
+- `agentInitiator.md` retired; replaced by `agentContext.md` with expanded brief
+- Brief now covers: SOTA survey + affordance analysis + TRIZ contradiction analysis
+- Re-runnable at any point (not just project start); output goes to user, no prescribed handoff
+- `agentQ.md` renamed from `AgentQ.md` to match naming convention
+
+#### TRIZ KB created
+
+TRIZ (Theory of Inventive Problem Solving) added as a shared KB at `.claude/kb/triz/triz.md`.
+
+Key framing: software systems are mechanical at the design level — classes, modules, and data
+structures have interfaces, transfer data, accumulate friction at boundaries, and contain
+redundant components. TRIZ applies selectively where the problem has this mechanical structure.
+
+The KB opens with the **real vs incidental contradiction test**: before applying TRIZ, determine
+whether the conflict is structural (cannot be otherwise) or incidental (exists because of an
+implementation choice). Elaborate TRIZ resolutions applied to incidental contradictions are waste.
+
+Affordant elements extracted for software use:
+- Naming contradictions (technical and physical)
+- Trimming — remove components whose function is already served elsewhere
+- Ideality — ask what the mechanism looks like when it disappears
+- Separation principles — resolve physical contradictions by separating in time, space, or condition
+- Affordance identification — where problem constraints amplify a solution beyond its general case
+
+**Not cargo cult TRIZ** — the contradiction matrix and full 40-principle procedure are not applied
+mechanically. Only the elements that have direct mechanical analogues in software are used.
+
+#### output-format.md extended
+
+Two new sections added to the agentContext report format:
+- **Section 3 — Affordance Analysis**: per-option cross-reference against known problem constraints
+- **Section 4 — Contradiction Analysis (TRIZ)**: named contradictions + trimming table
+
+#### agentContext first run — orderbook domain
+
+agentContext was run against the current orderbook project as a validation test.
+Full report saved to `context.md` in this directory.
+
+Key findings beyond the existing Iter 7 plan:
+- **vEB dismissed with precision**: crossover at U≥2^16; at U=100 the bitmap wins unconditionally
+- **Intrusive list flagged as regressive**: pointer-scattered nodes permanently foreclose SIMD
+- **`drained` flag + `remove_if` can be eliminated**: bitmap bit cleared on empty level; compaction
+  loop not needed — this was not in the original Iter 7 plan
+- **Implementation order constraint**: Change 2 (Order size) cannot precede Change 1 (bitmap)
+- **std::pmr not transformative here**: Order objects already contiguous in vector, not heap-allocated
+
+#### Utility assessment
+
+agentContext is most powerful at project start on an unmeasured problem. Mid-project it functions
+as a structured audit — confirms nothing obvious is missed, surfaces trimming candidates, enforces
+the real vs incidental contradiction test. The reassurance function is its honest core value: when
+it dismisses an approach with structured reasoning, that dismissal is worth examining even if the
+user's instinct already pointed the same way.
+
+Candidate for code review use — the trimming lens (what can be removed, what function is already
+served elsewhere) is a different axis from code-reviewer's quality/correctness focus. To be tested.
 
 ### Retrospective — Lessons from Iterations 1–5
 
@@ -616,65 +686,97 @@ encoded in agentASM's workflow.
 **Status**: PLANNED
 **Date**: 2026-03-17
 
-### Scope (agentDuality review — 2026-03-17)
+### Scope (agentDuality review — 2026-03-17, revised post-context.md — 2026-03-17)
 
-Three synergistic structural changes, ranked by expected impact:
+Four synergistic structural changes. Changes 1/3/4 and the PriceLevel.price trim are one
+atomic commit; Change 2 is a separate commit after benchmarks confirm Change 1's baseline.
 
 #### Change 1 — Bitmap + fixed `PriceLevel[N_TICKS]` array (highest impact)
 
 Replace `std::vector<PriceLevel> bids/asks` with:
 - `uint64_t bid_bits[2]`, `uint64_t ask_bits[2]` — 128-bit bitset, each bit = one tick
-- `PriceLevel levels[N_TICKS]` — flat array, index = tick integer
+- `PriceLevel bid_levels[100]`, `PriceLevel ask_levels[100]` — flat fixed arrays, index = tick integer
 
 **Why the envelope allows it:** price band [97.50, 102.50] = 100 ticks at 0.05 granularity,
-p_max=82 observed. 128-bit bitset covers it with margin; fits in a register.
+p_max=82 observed. 128-bit bitset covers it with 28-tick margin; fits in a register.
 
 **Expected gains:**
 - `addOrder` no-cross: eliminates O(log p) binary search (~14 cycles) + O(p) memmove
-  (~82 cycles at p=82). The memmove is ~25–50% of the current 156 cycles/op no-cross cost.
+  (~82 cycles at p=82).
 - `cancelOrder`: level lookup becomes O(1) direct array index — eliminates binary search.
-- `getBestBid/Ask`: BSR/BSF instructions (1 cycle) instead of `front()`.
+- `getBestBid/Ask`: BSR/BSF instructions (1 cycle, register op) instead of `front()`.
 - Matching loop: integer tick comparison replaces float comparison.
 
-**Cost:** price-to-tick conversion (~5 cycles for `roundsd`) added at every addOrder/cancel.
+**Cost:** price-to-tick conversion (~5 cycles) added at every addOrder/cancel.
 
-#### Change 2 — Remove `Order.price` (24 → 16 bytes)
+**Also trim `PriceLevel.price` as part of this commit** — after Change 1, the level slot
+index encodes the price; the struct field is redundant. Price reconstructed on demand as
+`BASE_PRICE + tick * TICK_SIZE`. Reduces sizeof(PriceLevel): 48 → 40 bytes.
+Fixed array: 100 × 40 = 4,000 bytes/side — comfortably L1-resident.
+Add `static_assert(sizeof(PriceLevel) == 40)` to lock layout.
+
+#### Change 2 — Remove `Order.price` (24 → 16 bytes) — separate commit
 
 `Order.price` is stored redundantly in every resting order — the matching loop never reads
-it (it reads `level.price` for the crossing check, not `resting.price`). Removing it:
+it. Removing it:
 - Reduces sizeof(Order): 24 → 16 bytes
 - Improves cache line density: 2.67 → 4.0 orders per 64-byte cache line (+50%)
-- Reduces inner order buffer working set: ~1.88MB → ~1.25MB in L3
+- Reduces inner order buffer working set: ~2.13MB → ~1.42MB in L3
 
-Expected gain on crossing paths (addOrder cross-5L at 776 cycles/op): 10–20% if the fill
-loop is L3-cache-bound. Speculative — confirm with benchmark.
+Update `static_assert(sizeof(Order) == 24)` → `== 16`.
+Expected gain on crossing paths: 10–20% if fill loop is L3-bandwidth-bound. Speculative —
+confirm with benchmark.
+**Dependency:** must not be implemented before Change 1 is in place and benchmarked.
 
-#### Change 3 — `int levelTick` in `OrderLocation` (combine with Change 1)
+#### Change 3 — `int levelTick` in `OrderLocation` (commit with Change 1)
 
 Replace `double levelPrice` in `OrderLocation` with `int levelTick`. With bitmap indexing,
 the tick is the direct array index — level lookup in `cancelOrder` becomes a single
-array dereference with no comparison. This also eliminates the floating-point equality
-fragility in level lookup (latent bug: if price at add and cancel time ever differ by
-floating-point epsilon, the binary search silently fails to find the level).
+array dereference with no comparison. Eliminates floating-point equality fragility in
+level lookup (latent bug: epsilon mismatch silently fails to find the level).
 
-Reduces sizeof(OrderLocation): 24 → 16 bytes (or smaller with uint16_t). Reduces
-`orderIndex` working set proportionally.
+Reduces sizeof(OrderLocation): 24 → 16 bytes. Reduces `orderIndex` working set proportionally.
+
+#### Change 4 — Remove `drained` flag + `remove_if` compaction pass (commit with Change 1)
+
+With bitmap indexing, an empty level is represented by clearing its bitmap bit inline when
+the last order fills during the match loop. The `drained` bool and trailing
+`asks.erase(remove_if(...))` call are eliminated entirely.
+
+Not in the original plan — surfaces from agentContext TRIZ trimming analysis. Simplifies
+the match loop: one fewer conditional, one fewer O(p) pass, one fewer branch.
+
+### Implementation order
+
+| Step | Changes | When |
+|------|---------|------|
+| Commit 1 | Change 1 + Change 3 + PriceLevel.price trim + Change 4 | Together — intermediate states are incoherent |
+| Commit 2 | Change 2 (Order.price removal) | After Commit 1 benchmarks establish new baseline |
 
 ### Agent workflow
 
 ```
-agentInitiator — DONE (Iter 6, SOTA review on record)
-agentDuality review — DONE (2026-03-17)
+agentContext — DONE (Iter 6, SOTA + affordance + TRIZ on record)
+agentDuality review — DONE (revised 2026-03-17 post-context.md)
 agentASM pre-flight → compile bitmap design with -S, verify BSR/BSF emission
-Class Creator → implement bitmap + Order struct changes
+Class Creator → implement Commit 1 changes
 Code Integrator → merge, update bench.cpp
 benchmark → compare against Iter 5 baselines
+Class Creator → implement Commit 2 (Order.price removal)
+benchmark → attribute density gain separately
 ```
+
+### Future flag (not Iteration 7)
+
+Match loop `resting.quantity == 0.0` branch is data-dependent. With 16-byte Orders and
+L3 bandwidth as the post-Iter7 constraint, misprediction becomes relatively more important.
+Candidate for agentASM branchless review in Iteration 8.
 
 ### Deferred (not in scope)
 
 - `orderIndex` ID recycling / compaction: no per-op cycle gain at current N
 - Inner order vector compaction threshold: invisible in current benchmark
+- SoA inner order buffer: fill loop is dependency-limited, not bandwidth-limited; Iter 5 null result stands
 - Atomics: no concurrency model defined
 
 ---
