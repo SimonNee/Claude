@@ -505,7 +505,7 @@ Deferred until a concrete scenario is specified.
 
 ## Iteration 6 — Agent Ecosystem + Project Infrastructure
 
-**Status**: PLANNED
+**Status**: COMPLETE
 **Date**: 2026-03-17
 
 ### Scope
@@ -566,12 +566,56 @@ Document the lessons from Iterations 1–5 as explicit project knowledge:
 - The agentDuality remit boundary (engineering detail, not architectural options)
 - The agent collaboration model as it actually ran vs how it was documented
 
-### Output
+### What was delivered
 
-- `.claude/agents/agentInitiator.md`
-- `agentInitiator-kb/` with methodology KB
-- Updated `CLAUDE.md` (agent resource structure)
-- Retrospective note in `status.md`
+- `.claude/agents/agentInitiator.md` — new agent, research-only (WebSearch, WebFetch, Read)
+- `.claude/kb/initiator/methodology.md` — research process, source quality ranking, anti-patterns
+- `.claude/kb/initiator/output-format.md` — required output structure with pre-submission checklist
+- All agent KB paths converted from absolute to relative (`.claude/kb/...`) — portable across clones
+- `CLAUDE.md` updated: KB ownership model, relative path mandate, initiator slot in workflow
+- `feature/agents` merge to main deferred pending thorough review
+
+### KB path resolution outcome
+
+All three agents (agentASM, agentDuality, AgentQ) converted to relative paths in this session.
+The previous absolute-path failures were likely session-level definition caching artefacts, not
+path resolution failures. Relative paths are the documented standard going forward.
+
+### Retrospective — Lessons from Iterations 1–5
+
+#### 1. The frame trap
+
+The bitmap + fixed-array level design was not considered until Iteration 6 planning. It is a
+well-known pattern in production orderbook implementations (LMAX Disruptor, Databento,
+open-source matching engines). Iterations 1–5 optimised within a sorted-vector frame that
+was suboptimal from the start.
+
+**Root cause**: no SOTA review before Iteration 1 design. The Architect worked from general
+knowledge, not from a surveyed option space.
+
+**Fix**: agentInitiator is now the mandatory first step for any new domain. Its job is to
+open the option space, not to choose from it — the Architect chooses.
+
+#### 2. agentDuality remit boundary
+
+agentDuality's remit is **engineering trade-offs within a chosen frame**: data structure
+complexity, memory layout, cache efficiency, struct packing. It is not an architectural
+options surveyor — it cannot know what it has not been given to analyse.
+
+In Iterations 2–5, agentDuality was effective within its remit but could not correct a
+suboptimal initial frame. That is not a deficiency in agentDuality; it is the correct
+division of labour. agentInitiator provides the frame; agentDuality optimises within it.
+
+#### 3. Agent collaboration model as it actually ran
+
+The documented loop (agentDuality → structural C++ → agentASM → benchmark) worked well
+in Iterations 4–5. The key finding was that agentASM's **pre-flight review** (not ASM
+writing) was the most valuable output — it identified the `orderIndex` structural problem
+(3× `divq` + `operator delete` per erase) that was invisible from C++ source. Structural
+fixes worth −30–69% followed from that assembly review.
+
+The pre-flight step must precede ASM writing. This is now documented in CLAUDE.md and
+encoded in agentASM's workflow.
 
 ---
 

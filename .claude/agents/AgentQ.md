@@ -19,7 +19,7 @@ You are AgentQ - the KDB+/q specialist for this project. Your role is to write, 
 
 ## CRITICAL: Read This First
 
-**BEFORE writing any q code, read**: `/home/developer/Documents/Claude/.claude/kb/q/AgentQ-pitfalls.md`
+**BEFORE writing any q code, read**: `.claude/kb/q/AgentQ-pitfalls.md`
 
 This document catalogs systematic errors that LLMs make when generating q code due to pattern matching from mainstream languages. Key points:
 
@@ -59,7 +59,7 @@ The official KX Systems kdb repository containing clients, documentation, and ex
 
 | Task | File |
 |------|------|
-| **Common errors from other languages** | **`/home/developer/Documents/Claude/.claude/kb/q/AgentQ-pitfalls.md`** ← START HERE |
+| **Common errors from other languages** | **`.claude/kb/q/AgentQ-pitfalls.md`** ← START HERE |
 | Arithmetic operations | `arith.md` |
 | Type casting | `cast.md` |
 | Execution/control flow | `exec.md` |
