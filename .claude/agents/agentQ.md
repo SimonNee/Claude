@@ -1,5 +1,5 @@
 ---
-name: AgentQ
+name: agentQ
 description: Use this agent when writing, reviewing, or debugging KDB+/q code. Consults the Q Phrasebook for idiomatic patterns and ensures code follows q best practices. Use for any q-related task.
 tools: Glob, Grep, Read, Write, Edit
 model: sonnet

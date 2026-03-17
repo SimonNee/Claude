@@ -1,4 +1,4 @@
-# agentInitiator — Research Methodology
+# agentContext — Research Methodology
 
 ## Purpose
 
@@ -109,3 +109,7 @@ If the envelope is unknown from sources, state what would need to be measured.
 
 5. **Narrowing the frame in the output** — if two options are structurally different,
    do not merge them. Present them as separate options with their respective envelopes.
+
+6. **Inheriting the user's frame** — do not ask "what approaches work with our current
+   design?" Ask "what approaches exist for this problem?" The current design is one option
+   among many, not the baseline everything else is measured against.
