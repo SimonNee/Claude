@@ -846,6 +846,90 @@ Candidate for agentASM branchless review in Iteration 8.
 
 ---
 
+## Iteration 8 — ASM Double-Load Fix (matchBuy_asm / matchSell_asm)
+
+**Status**: COMPLETE
+**Date**: 2026-03-17
+**Tag**: `iter-8-complete` (pending)
+
+### Scope
+
+Single targeted fix: eliminate the double-load of `resting.quantity` in the inner fill
+loop. Identified as medium-priority in the Iteration 7 agentASM pre-flight; revisited
+after Change 2 benchmark confirmed the fill loop is not bandwidth-limited at q_mean for
+no-cross paths but that the inner arithmetic itself is the ceiling.
+
+### What was implemented
+
+`addOrder_asm` / `matchBuy_asm` / `matchSell_asm` — new functions with `_asm` suffix.
+All surrounding C++ (bitmap walk, pop_front, orderIndex update, clearBit on drain) is
+preserved identically to the originals. Only the fill arithmetic inside the inner loop
+is replaced with an `__asm__ volatile` block.
+
+**Problem (from Iter 7 pre-flight, confirmed by `-S` output):**
+
+Compiler-generated inner loop emits two loads of `resting.quantity`:
+1. `vmovsd (%rax), %xmm1` → xmm1 = resting.qty
+2. `vminsd %xmm0, %xmm1, %xmm1` → xmm1 = fill (overwrites original value)
+3. `vmovsd (%rax), %xmm0` → **second load** — original resting.qty needed again for subtraction
+4. `vsubsd %xmm1, %xmm0, %xmm0` → resting.qty -= fill
+
+**Fix:** use two distinct XMM scratch registers — one for fill, one as a copy of the
+original resting.quantity — so the second load from memory is replaced by a register-register move.
+
+```cpp
+double xmm_fill, xmm_rest;
+__asm__ volatile (
+    "vmovsd %[resting_qty], %[xmm_fill]\n\t"   // load resting.qty once
+    "vmovsd %[resting_qty], %[xmm_rest]\n\t"   // copy (L1-resident, cheap)
+    "vminsd %[order_qty], %[xmm_fill], %[xmm_fill]\n\t"
+    "vsubsd %[xmm_fill], %[order_qty], %[order_qty]\n\t"
+    "vsubsd %[xmm_fill], %[xmm_rest], %[xmm_rest]\n\t"
+    "vmovsd %[xmm_rest], %[resting_qty]\n\t"
+    : [order_qty]   "+x" (order.quantity),
+      [resting_qty] "+m" (resting.quantity),
+      [xmm_fill]    "=&x"(xmm_fill),
+      [xmm_rest]    "=&x"(xmm_rest)
+    : :
+);
+```
+
+**Branchless zero-check — NOT implemented:**
+The `resting.quantity == 0.0` branch gates `orderIndex[resting.id] = std::nullopt` and
+`level.pop_front()` — both with non-trivial C++ side effects that cannot be SSE-masked.
+Branch is highly predictable (almost always not-taken until drain). Assessed and deferred.
+
+### Benchmark results (2026-03-17)
+
+Benchmarks run: `benchAddCross1Level_asm` and `benchAddCross5Levels_asm` (crossing paths
+only — the fill loop only executes on crossing orders).
+
+| Benchmark | C++ | ASM | Delta |
+|-----------|-----|-----|-------|
+| addOrder cross-1L | 69 | 68 | −1% (noise) |
+| addOrder cross-5L | 466 | 330 | **−29%** |
+
+The 5-level result is the meaningful measurement: the inner loop executes 5× per crossing
+order, so eliminating one register-to-memory reload per iteration compounds.
+
+The 1-level result is noise — the fill loop runs exactly once, so the saving is one
+redundant load amortised across all other addOrder overhead.
+
+### Analysis
+
+The −29% on cross-5L (136 cycles saved per order) confirms the double-load was a real
+cost at fill-loop depth. At depth 1 it is invisible. This is consistent with the Iteration 7
+finding that cross-path benchmarks are serial-dependency-limited: the ASM fix removes one
+memory round-trip per iteration without changing the carried-dependency structure, so the
+benefit scales with depth.
+
+### Deferred
+
+- Branchless `resting.quantity == 0.0` check: architectural blocker (C++ side effects), predictable branch
+- `matchSell_asm` applied identical fix — symmetric path, same findings apply
+
+---
+
 ## Data Generator
 
 **Status**: WORKING

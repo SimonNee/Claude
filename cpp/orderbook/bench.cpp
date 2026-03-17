@@ -226,12 +226,50 @@ static void benchMixed(int n, double cancelRate, const char* label) {
     printResult(label, ops, t1 - t0);
 }
 
+static void benchAddCross1Level_asm(int n) {
+    OrderBook book;
+
+    for (int i = 0; i < n / 10; ++i) {
+        book.addOrder_asm(Side::Sell, 100.05, 1.0);
+        book.addOrder_asm(Side::Buy,  100.05, 1.0);
+    }
+
+    uint64_t t0 = rdtscp();
+    for (int i = 0; i < n; ++i) {
+        book.addOrder_asm(Side::Sell, 100.05, 1.0);
+        book.addOrder_asm(Side::Buy,  100.05, 1.0);
+    }
+    uint64_t t1 = rdtscp();
+
+    printResult("addOrder_asm crossing 1 level", n, t1 - t0);
+}
+
+static void benchAddCross5Levels_asm(int n) {
+    OrderBook book;
+
+    for (int i = 0; i < n / 10; ++i) {
+        for (int l = 1; l <= 5; ++l)
+            book.addOrder_asm(Side::Sell, 100.0 + l * 0.05, 1.0);
+        book.addOrder_asm(Side::Buy, 100.30, 5.0);
+    }
+
+    uint64_t t0 = rdtscp();
+    for (int i = 0; i < n; ++i) {
+        for (int l = 1; l <= 5; ++l)
+            book.addOrder_asm(Side::Sell, 100.0 + l * 0.05, 1.0);
+        book.addOrder_asm(Side::Buy, 100.30, 5.0);
+    }
+    uint64_t t1 = rdtscp();
+
+    printResult("addOrder_asm crossing 5 levels", n, t1 - t0);
+}
+
 int main() {
     constexpr int N_STD    = 500000;
     constexpr int N_CROSS  = 100000;
     constexpr int N_CHEAP  = 1000000;
 
-    std::cout << "=== Iteration 3 Benchmarks ===\n\n";
+    std::cout << "=== Iteration 7 Benchmarks ===\n\n";
 
     benchAddNoCross(N_STD);
     benchAddCross1Level(N_CROSS);
@@ -241,6 +279,11 @@ int main() {
     benchMixed(N_STD, 0.10, "mixed workload cancel=10%");
     benchMixed(N_STD, 0.50, "mixed workload cancel=50%");
     benchMixed(N_STD, 0.90, "mixed workload cancel=90%");
+
+    std::cout << "\n=== Iteration 8 ASM variants (cross paths only) ===\n\n";
+
+    benchAddCross1Level_asm(N_CROSS);
+    benchAddCross5Levels_asm(N_CROSS);
 
     return 0;
 }
