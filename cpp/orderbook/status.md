@@ -522,6 +522,20 @@ The orderbook optimisation work (Iterations 1–5) exposed two process gaps:
    exists for project initiation. Agent KB files live in ad-hoc locations with no documented
    ownership or maintenance model.
 
+### Pick up in fresh session
+
+- **Verify agentDuality KB paths** — all three agents (agentASM, agentDuality, AgentQ) need
+  testing in a clean session to confirm KB files are found correctly. agentASM and AgentQ
+  confirmed working. agentDuality was blocked by session-level definition caching.
+- **Resolve absolute vs relative KB paths** — current agent files use absolute paths
+  (`/home/developer/Documents/Claude/.claude/kb/...`) which break on a different clone.
+  In the fresh session, test whether relative `.claude/kb/...` paths work for all agents
+  (AgentQ succeeded with this format; agentASM/agentDuality failures may have been cache
+  artefacts, not path resolution failures). If relative paths work, update all agents.
+  If not, document the path as a one-time setup step in CLAUDE.md.
+- **Merge `feature/agents` to main** — cherry-pick agent infrastructure commits only
+  (KB renames + agent path fixes + CLAUDE.md). Orderbook commits stay on branch.
+
 ### Work items
 
 #### 1. Create `agentInitiator`
