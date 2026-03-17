@@ -9,21 +9,6 @@
 
 enum class Side { Buy, Sell };
 
-// Price grid constants — compile-time fixed.
-// 100 ticks of 0.05 covers [97.50, 102.45].
-constexpr int    N_TICKS    = 100;
-constexpr double BASE_PRICE = 97.50;
-constexpr double TICK_SIZE  = 0.05;
-
-// Convert between double price and integer tick index.
-// Tick 0 == BASE_PRICE; tick N == BASE_PRICE + N * TICK_SIZE.
-static inline int priceToTick(double price) {
-    return static_cast<int>((price - BASE_PRICE) * 20.0 + 0.5);
-}
-static inline double tickToPrice(int tick) {
-    return BASE_PRICE + tick * TICK_SIZE;
-}
-
 // Order.price removed in Iteration 7 — price is encoded by the level's slot index.
 // sizeof(Order) == 16 (was 24; was 32 in Iteration 1).
 struct Order {
@@ -65,26 +50,62 @@ struct PriceLevel {
 
 static_assert(sizeof(PriceLevel) == 40, "PriceLevel layout changed");
 
-class OrderBook {
+// Forward declarations of bitmap helpers (defined in orderbook_impl.h).
+// Declared here so getBestBid/getBestAsk/getSpread can be defined inline
+// in the class body — inline definitions are always inlined by GCC regardless
+// of LTO inlining heuristics (no "call is cold" / code-growth refusal).
+template<int NWORDS> static inline int lowestBit(const uint64_t* bits);
+template<int NWORDS> static inline int highestBit(const uint64_t* bits);
+
+template<int N_TICKS, int TICKS_PER_UNIT>
+class OrderBookT {
 public:
+    // N_BITMAP_WORDS is determined entirely by N_TICKS and locks in the bitmap array sizes.
+    // At N_TICKS=100 → 2 words. At N_TICKS=500 → 8 words. At N_TICKS=1000 → 16 words.
+    // N_TICKS <= ~400 fits in 32KB L1; N_TICKS=1000 is ~80KB (L2); N_TICKS >= 1000 use heap allocation.
+    static constexpr int N_BITMAP_WORDS = (N_TICKS + 63) / 64;
+
+    // Constructor default argument preserves the current effective BASE_PRICE=97.50
+    // for the <100,20> instantiation: 100.0 - 50 * (1.0/20) = 100.0 - 2.50 = 97.50.
+    explicit OrderBookT(double base_price = 100.0 - 50 * (1.0 / TICKS_PER_UNIT))
+        : base_price_(base_price) {}
+
     // Insert a limit order. Matches immediately if crossing. Returns assigned id.
     int addOrder(Side side, double price, double quantity);
 
     // Remove an order by id. Returns true if found and removed.
     bool cancelOrder(int id);
 
-    std::optional<double> getBestBid() const;
-    std::optional<double> getBestAsk() const;
-
+    // Inline definitions: always inlined by GCC without LTO heuristic refusal.
+    // lowestBit/highestBit are forward-declared above the class body.
+    std::optional<double> getBestBid() const {
+        int tick = highestBit<N_BITMAP_WORDS>(bid_bits);
+        if (tick < 0) return std::nullopt;
+        return tickToPrice(tick);
+    }
+    std::optional<double> getBestAsk() const {
+        int tick = lowestBit<N_BITMAP_WORDS>(ask_bits);
+        if (tick < 0) return std::nullopt;
+        return tickToPrice(tick);
+    }
     // Returns ask - bid. nullopt if either side is empty.
-    std::optional<double> getSpread() const;
+    std::optional<double> getSpread() const {
+        auto bid = getBestBid();
+        auto ask = getBestAsk();
+        if (!bid || !ask) return std::nullopt;
+        return *ask - *bid;
+    }
 
     // Instrumentation — active price level counts (set bits in bitmap)
     std::size_t bidLevels() const {
-        return __builtin_popcountll(bid_bits[0]) + __builtin_popcountll(bid_bits[1]);
+        std::size_t n = 0;
+        for (int w = 0; w < N_BITMAP_WORDS; ++w) n += __builtin_popcountll(bid_bits[w]);
+        return n;
     }
     std::size_t askLevels() const {
-        return __builtin_popcountll(ask_bits[0]) + __builtin_popcountll(ask_bits[1]);
+        std::size_t n = 0;
+        for (int w = 0; w < N_BITMAP_WORDS; ++w) n += __builtin_popcountll(ask_bits[w]);
+        return n;
     }
 
     // Instrumentation — append live order count per level into out
@@ -98,10 +119,12 @@ public:
 private:
     int nextId = 1;
 
-    // 128-bit bitmaps: bit i set means tick i has live orders on that side.
+    double base_price_;
+
+    // Bitmap: bit i set means tick i has live orders on that side.
     // Fixed arrays of N_TICKS levels — slot index encodes price.
-    uint64_t   bid_bits[2]        = {};
-    uint64_t   ask_bits[2]        = {};
+    uint64_t   bid_bits[N_BITMAP_WORDS] = {};
+    uint64_t   ask_bits[N_BITMAP_WORDS] = {};
     PriceLevel bid_levels[N_TICKS];
     PriceLevel ask_levels[N_TICKS];
 
@@ -121,6 +144,19 @@ private:
     static_assert(sizeof(OrderLocation) == 16, "OrderLocation layout changed — check sentinel and imulq elimination");
     std::vector<OrderLocation> orderIndex;
 
+    // Convert between double price and integer tick index.
+    // Tick 0 == base_price_; tick N == base_price_ + N * (1.0/TICKS_PER_UNIT).
+    inline int priceToTick(double price) const {
+        return static_cast<int>((price - base_price_) * TICKS_PER_UNIT + 0.5);
+    }
+    inline double tickToPrice(int tick) const {
+        return base_price_ + tick * (1.0 / TICKS_PER_UNIT);
+    }
+
     void matchBuy(Order& order, int orderTick);
     void matchSell(Order& order, int orderTick);
 };
+
+#include "orderbook_impl.h"
+
+using OrderBook = OrderBookT<100, 20>;

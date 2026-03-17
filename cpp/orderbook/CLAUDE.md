@@ -57,7 +57,7 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 
 ## Current Iteration
 
-**12 — COMPLETE (see status.md for full scope)**
+**13 — COMPLETE (see status.md for full scope)**
 
 ## Iteration Summary
 
@@ -75,3 +75,4 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 | 10 | Replace optional<OrderLocation> with sentinel struct (-13% no-cross) | No |
 | 11 | LTO cross-TU inlining + benchmark sink fix (-7% no-cross, -53% getBBA) | No |
 | 12 | Eliminate third resting.quantity load via resting_qty_out ASM output | Yes |
+| 13 | Template OrderBookT<N_TICKS,TICKS_PER_UNIT>; getBestBid/Ask inline (-61% trio) | No |

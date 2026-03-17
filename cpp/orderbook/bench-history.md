@@ -30,6 +30,35 @@ Build: `g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp`
 
 ---
 
+## Iteration 13 — Template OrderBookT<N_TICKS, TICKS_PER_UNIT>
+
+**Date**: 2026-03-17 | **Tag**: `iter-13-complete` (pending)
+**Build**: `g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp`
+
+| Operation | N | cycles/op | vs Iter 12 |
+|-----------|---|-----------|------------|
+| addOrder no-cross | 500,000 | 82 | ~0 |
+| addOrder crossing 1 level | 100,000 | 59 | ~0 |
+| addOrder crossing 5 levels | 100,000 | 378 | ~0 |
+| cancelOrder | 500,000 | 13 | ~0 |
+| getBestBid+Ask+Spread (per trio) | 1,000,000 | 7 | **−61%** |
+| mixed workload cancel=10% | ~550,000 | 101 | ~0 |
+| mixed workload cancel=50% | ~750,000 | 84 | ~0 |
+| mixed workload cancel=90% | ~950,000 | 66 | ~0 |
+
+OrderBook is now `OrderBookT<int N_TICKS, int TICKS_PER_UNIT>`. `using OrderBook = OrderBookT<100, 20>`
+preserves all existing code unchanged.
+
+Two issues surfaced and fixed during implementation:
+1. `lowestBit`/`highestBit` loop not unrolled — made into `template<int NWORDS>` free functions;
+   compiler now unrolls as a language guarantee.
+2. LTO cold-call inlining refusal on `getSpread` → `getBestBid`/`getBestAsk` — moved all three
+   to inline class-body definitions, eliminating frame setup entirely.
+
+Net result: getBestBid+Ask+Spread improves 18 → 7 cycles (−61%) beyond the pre-template baseline.
+
+---
+
 ## Iteration 12 — Eliminate third resting.quantity load (post-ASM zero-check)
 
 **Date**: 2026-03-17 | **Tag**: `iter-12-complete` (pending)
