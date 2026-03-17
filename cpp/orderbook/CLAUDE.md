@@ -57,7 +57,7 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 
 ## Current Iteration
 
-**13 — COMPLETE (see status.md for full scope)**
+**18 — COMPLETE (see status.md for full scope)**
 
 ## Iteration Summary
 
@@ -76,3 +76,8 @@ agentDuality → structural C++ change → agentASM pre-flight → ASM if warran
 | 11 | LTO cross-TU inlining + benchmark sink fix (-7% no-cross, -53% getBBA) | No |
 | 12 | Eliminate third resting.quantity load via resting_qty_out ASM output | Yes |
 | 13 | Template OrderBookT<N_TICKS,TICKS_PER_UNIT>; getBestBid/Ask inline (-61% trio) | No |
+| 14 | Multi-config benchSuite; cache tier analysis across 5 instantiations | No |
+| 15 | Uniform-price benchmark; L1→L2 transition confirmed at 200→500 ticks | No |
+| 16 | Anomaly investigation: ~42 cycles was LTO layout artifact; unrolling comment fixed | No |
+| 17 | #pragma GCC unroll 64 on lowestBit/highestBit; getBBA −22% to −55% at 200–1000 ticks | No |
+| 18 | Add 2000/3000/4000-tick configs; L2→L3 transition confirmed at 1000→2000 ticks (+82% getBBA) | No |

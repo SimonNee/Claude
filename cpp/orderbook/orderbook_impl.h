@@ -20,19 +20,20 @@ static inline void clearBit(uint64_t* bits, int tick) {
 }
 
 // Lowest set bit — best ask (lowest price == lowest tick).
-// NWORDS is a compile-time constant so the compiler unrolls the loop
-// into a straight-line if-chain; no loop counter survives to machine code.
+// GCC unrolls the loop for small NWORDS (≤8); for NWORDS=16 it emits a runtime
+// loop. Either way correctness is unaffected; the loop exits on first non-zero word.
 template<int NWORDS>
 static inline int lowestBit(const uint64_t* bits) {
+#pragma GCC unroll 64
     for (int w = 0; w < NWORDS; ++w)
         if (bits[w]) return w * 64 + __builtin_ctzll(bits[w]);
     return -1;
 }
 
 // Highest set bit — best bid (highest price == highest tick).
-// Same reasoning as lowestBit: compile-time NWORDS guarantees unrolling.
 template<int NWORDS>
 static inline int highestBit(const uint64_t* bits) {
+#pragma GCC unroll 64
     for (int w = NWORDS - 1; w >= 0; --w)
         if (bits[w]) return w * 64 + 63 - __builtin_clzll(bits[w]);
     return -1;
