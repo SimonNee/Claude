@@ -2,72 +2,68 @@
 
 #include <algorithm>
 
-// Binary search helpers — return iterator to matching level or insertion point.
+// Bitmap helpers.
+// bits[tick >> 6] is the 64-bit word; (1ULL << (tick & 63)) is the bit mask.
+// These operate on the two-word array passed by pointer (decays from uint64_t[2]).
 
-static auto findBidLevel(std::vector<PriceLevel>& bids, double price) {
-    // bids is descending; find first element where price >= pl.price
-    return std::lower_bound(bids.begin(), bids.end(), price,
-        [](const PriceLevel& pl, double p) { return pl.price > p; });
+static inline void setBit(uint64_t bits[2], int tick) {
+    bits[tick >> 6] |= (1ULL << (tick & 63));
 }
 
-static auto findAskLevel(std::vector<PriceLevel>& asks, double price) {
-    // asks is ascending; find first element where price <= pl.price
-    return std::lower_bound(asks.begin(), asks.end(), price,
-        [](const PriceLevel& pl, double p) { return pl.price < p; });
+static inline void clearBit(uint64_t bits[2], int tick) {
+    bits[tick >> 6] &= ~(1ULL << (tick & 63));
+}
+
+// Lowest set bit — best ask (lowest price == lowest tick).
+static inline int lowestBit(const uint64_t bits[2]) {
+    if (bits[0]) return __builtin_ctzll(bits[0]);
+    if (bits[1]) return 64 + __builtin_ctzll(bits[1]);
+    return -1;
+}
+
+// Highest set bit — best bid (highest price == highest tick).
+static inline int highestBit(const uint64_t bits[2]) {
+    if (bits[1]) return 64 + 63 - __builtin_clzll(bits[1]);
+    if (bits[0]) return 63 - __builtin_clzll(bits[0]);
+    return -1;
 }
 
 int OrderBook::addOrder(Side side, double price, double quantity) {
     Order order{price, quantity, nextId++, side};
 
+    int tick = priceToTick(price);
+
     if (side == Side::Buy) {
-        matchBuy(order);
+        matchBuy(order, tick);
         if (order.quantity > 0.0) {
-            auto it = findBidLevel(bids, price);
-            if (it != bids.end() && it->price == price) {
-                std::size_t idx = it->orders.size();
-                it->push_back(order);
-                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
-                orderIndex[order.id] = {Side::Buy, price, idx};
-            } else {
-                PriceLevel level;
-                level.price = price;
-                level.push_back(order);
-                bids.insert(it, std::move(level));
-                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
-                orderIndex[order.id] = {Side::Buy, price, 0};
-            }
+            if (bid_levels[tick].empty()) setBit(bid_bits, tick);
+            std::size_t idx = bid_levels[tick].orders.size();
+            bid_levels[tick].push_back(order);
+            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
+            orderIndex[order.id] = {Side::Buy, tick, idx};
         }
     } else {
-        matchSell(order);
+        matchSell(order, tick);
         if (order.quantity > 0.0) {
-            auto it = findAskLevel(asks, price);
-            if (it != asks.end() && it->price == price) {
-                std::size_t idx = it->orders.size();
-                it->push_back(order);
-                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
-                orderIndex[order.id] = {Side::Sell, price, idx};
-            } else {
-                PriceLevel level;
-                level.price = price;
-                level.push_back(order);
-                asks.insert(it, std::move(level));
-                if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
-                orderIndex[order.id] = {Side::Sell, price, 0};
-            }
+            if (ask_levels[tick].empty()) setBit(ask_bits, tick);
+            std::size_t idx = ask_levels[tick].orders.size();
+            ask_levels[tick].push_back(order);
+            if (order.id >= (int)orderIndex.size()) orderIndex.resize(order.id + 1);
+            orderIndex[order.id] = {Side::Sell, tick, idx};
         }
     }
 
     return order.id;
 }
 
-void OrderBook::matchBuy(Order& order) {
-    // Walk asks lowest-first; stop when no more crossable levels.
-    // Compaction is deferred to a single pass, but only runs when at least one
-    // level was fully drained — avoids O(p) scan on the common non-crossing case.
-    bool drained = false;
-    for (auto& level : asks) {
-        if (order.quantity <= 0.0 || level.price > order.price) break;
+void OrderBook::matchBuy(Order& order, int orderTick) {
+    // Walk asks lowest-first via bitmap; clear the bit inline when a level empties.
+    // No drained flag, no remove_if pass — the bitmap is the index of live levels.
+    while (order.quantity > 0.0) {
+        int askTick = lowestBit(ask_bits);
+        if (askTick < 0 || askTick > orderTick) break;
 
+        PriceLevel& level = ask_levels[askTick];
         while (!level.empty() && order.quantity > 0.0) {
             Order& resting = level.front();
             double fill = std::min(order.quantity, resting.quantity);
@@ -78,20 +74,18 @@ void OrderBook::matchBuy(Order& order) {
                 level.pop_front();
             }
         }
-        if (level.empty()) drained = true;
+        if (level.empty()) clearBit(ask_bits, askTick);
     }
-    if (drained)
-        asks.erase(std::remove_if(asks.begin(), asks.end(),
-            [](const PriceLevel& pl) { return pl.empty(); }), asks.end());
 }
 
-void OrderBook::matchSell(Order& order) {
-    // Walk bids highest-first; stop when no more crossable levels.
-    // Same conditional deferred compaction as matchBuy.
-    bool drained = false;
-    for (auto& level : bids) {
-        if (order.quantity <= 0.0 || level.price < order.price) break;
+void OrderBook::matchSell(Order& order, int orderTick) {
+    // Walk bids highest-first via bitmap; clear the bit inline when a level empties.
+    // No drained flag, no remove_if pass — the bitmap is the index of live levels.
+    while (order.quantity > 0.0) {
+        int bidTick = highestBit(bid_bits);
+        if (bidTick < 0 || bidTick < orderTick) break;
 
+        PriceLevel& level = bid_levels[bidTick];
         while (!level.empty() && order.quantity > 0.0) {
             Order& resting = level.front();
             double fill = std::min(order.quantity, resting.quantity);
@@ -102,42 +96,36 @@ void OrderBook::matchSell(Order& order) {
                 level.pop_front();
             }
         }
-        if (level.empty()) drained = true;
+        if (level.empty()) clearBit(bid_bits, bidTick);
     }
-    if (drained)
-        bids.erase(std::remove_if(bids.begin(), bids.end(),
-            [](const PriceLevel& pl) { return pl.empty(); }), bids.end());
 }
 
 bool OrderBook::cancelOrder(int id) {
     if (id <= 0 || id >= (int)orderIndex.size() || !orderIndex[id]) return false;
 
-    auto [side, levelPrice, orderIdx] = *orderIndex[id];
-    auto& levels = (side == Side::Buy) ? bids : asks;
+    auto [side, levelTick, orderIdx] = *orderIndex[id];
+    PriceLevel& level = (side == Side::Buy) ? bid_levels[levelTick] : ask_levels[levelTick];
 
-    auto levelIt = (side == Side::Buy)
-        ? findBidLevel(levels, levelPrice)
-        : findAskLevel(levels, levelPrice);
-
-    if (levelIt == levels.end() || levelIt->price != levelPrice) {
-        orderIndex[id] = std::nullopt;
-        return false;
+    level.cancel_at(orderIdx);
+    if (level.empty()) {
+        // Clear the bit on whichever side this order rested.
+        uint64_t* bits = (side == Side::Buy) ? bid_bits : ask_bits;
+        clearBit(bits, levelTick);
     }
-
-    levelIt->cancel_at(orderIdx);   // O(1) direct index — no scan, no shift
-    if (levelIt->empty()) levels.erase(levelIt);
     orderIndex[id] = std::nullopt;
     return true;
 }
 
 std::optional<double> OrderBook::getBestBid() const {
-    if (bids.empty()) return std::nullopt;
-    return bids.front().price;
+    int tick = highestBit(bid_bits);
+    if (tick < 0) return std::nullopt;
+    return tickToPrice(tick);
 }
 
 std::optional<double> OrderBook::getBestAsk() const {
-    if (asks.empty()) return std::nullopt;
-    return asks.front().price;
+    int tick = lowestBit(ask_bits);
+    if (tick < 0) return std::nullopt;
+    return tickToPrice(tick);
 }
 
 std::optional<double> OrderBook::getSpread() const {
@@ -146,4 +134,3 @@ std::optional<double> OrderBook::getSpread() const {
     if (!bid || !ask) return std::nullopt;
     return *ask - *bid;
 }
-

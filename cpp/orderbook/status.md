@@ -683,7 +683,7 @@ encoded in agentASM's workflow.
 
 ## Iteration 7 — Bitmap Level Index + Order Struct Reduction
 
-**Status**: PLANNED
+**Status**: IN PROGRESS
 **Date**: 2026-03-17
 
 ### Scope (agentDuality review — 2026-03-17, revised post-context.md — 2026-03-17)
@@ -758,13 +758,52 @@ the match loop: one fewer conditional, one fewer O(p) pass, one fewer branch.
 ```
 agentContext — DONE (Iter 6, SOTA + affordance + TRIZ on record)
 agentDuality review — DONE (revised 2026-03-17 post-context.md)
-agentASM pre-flight → compile bitmap design with -S, verify BSR/BSF emission
-Class Creator → implement Commit 1 changes
-Code Integrator → merge, update bench.cpp
-benchmark → compare against Iter 5 baselines
+agentASM pre-flight — DONE (2026-03-17, see findings below)
+Class Creator — DONE (Commit 1: bitmap + Changes 3/4 + PriceLevel.price trim)
+benchmark — DONE (2026-03-17, see results below)
 Class Creator → implement Commit 2 (Order.price removal)
 benchmark → attribute density gain separately
 ```
+
+### agentASM pre-flight findings (2026-03-17)
+
+Compiler output reviewed before any ASM was written.
+
+| Finding | Severity | Action taken |
+|---------|----------|-------------|
+| BSR/BSF emitting correctly, all bitmap helpers fully inlined | — | None |
+| `round@PLT` — external PLT call for `std::round` in every `addOrder` | High | Rewrote `priceToTick`: `(price - BASE_PRICE) * 20.0 + 0.5` — eliminates call and `divsd` |
+| `testq` zero-guards before every BSF/BSR — TZCNT/LZCNT available but unused | High | Added `-march=native` to all build commands |
+| Double-load of `resting.quantity` in inner fill loop | Medium | Deferred — revisit after Change 2 benchmark |
+| `matchSell` indirect BSR pattern (XOR/SUB vs direct) | Low | Resolved by `-march=native` → LZCNT |
+
+**`-march=native` note:** this flag enables ISA extensions specific to the build machine
+(TZCNT, LZCNT, and others). Benchmarks from Iteration 7 onward are not directly comparable
+to results from machines without these extensions. If portability is required, the
+equivalent portable fix is `-mbmi -mlzcnt` to target only the specific extensions used,
+or an explicit `__attribute__((target("bmi,lzcnt")))` on the bitmap helpers. The current
+benchmark machine has `bmi1` and `abm`/`lzcnt` confirmed in `/proc/cpuinfo`.
+
+### Commit 1 benchmark results (2026-03-17)
+
+All benchmarks: `-O2 -march=native`, synthetic in-memory workload, OU price walk.
+Iter 5 baselines also used `-O2` but not `-march=native` — delta includes both
+structural and ISA-extension gains.
+
+| Operation | Iter 5 | Iter 7 Commit 1 | Delta |
+|-----------|--------|-----------------|-------|
+| addOrder no-cross | 158 | 103 | −35% |
+| addOrder cross-1L | 125 | 69 | −45% |
+| addOrder cross-5L | 743 | 457 | −39% |
+| **cancelOrder** | **48** | **19** | **−60%** |
+| mixed cancel=10% | 182 | 112 | −38% |
+| mixed cancel=50% | 137 | 96 | −30% |
+| mixed cancel=90% | 109 | 68 | −38% |
+
+All operations improved 30–60%. `cancelOrder` at 19 cycles is essentially direct array
+dereference + tombstone write — close to the theoretical minimum. Change 2 (Order.price
+removal, 24→16 bytes) is the next step; expected gain on crossing paths where the fill
+loop is L3-bandwidth-bound.
 
 ### Future flag (not Iteration 7)
 

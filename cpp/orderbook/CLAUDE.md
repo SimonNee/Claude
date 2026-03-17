@@ -9,14 +9,17 @@ applies progressively more aggressive optimisation using agentASM.
 
 ```bash
 # Correctness tests (all iterations)
-g++ -std=c++17 -O2 -Wall -o tests tests.cpp orderbook.cpp && ./tests
+g++ -std=c++17 -O2 -march=native -Wall -o tests tests.cpp orderbook.cpp && ./tests
 
 # Smoke test driver
-g++ -std=c++17 -O2 -o main main.cpp orderbook.cpp && ./main
+g++ -std=c++17 -O2 -march=native -o main main.cpp orderbook.cpp && ./main
 
 # Benchmarks (Iteration 3+)
-g++ -std=c++17 -O2 -o bench bench.cpp orderbook.cpp && ./bench
+g++ -std=c++17 -O2 -march=native -o bench bench.cpp orderbook.cpp && ./bench
 ```
+
+Note: `-march=native` added from Iteration 7 — enables TZCNT/LZCNT (replacing BSF/BSR + zero guards)
+and unlocks further ISA-specific optimisations. Required for correct benchmark comparisons from Iter 7 onward.
 
 ## Iteration Rules
 
