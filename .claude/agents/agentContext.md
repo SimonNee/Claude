@@ -23,6 +23,8 @@ what to do with it.
 
 **MANDATORY READING ORDER — before any research:**
 
+- `.claude/kb/process/lessons.md` — project process lessons; reads in 2 minutes; tells you what goes wrong when this step is skipped
+
 1. `.claude/kb/triz/triz.md` — contradiction analysis, trimming, ideality, affordance identification
 2. `.claude/kb/initiator/methodology.md` — research process, source quality, frame trap
 3. `.claude/kb/initiator/output-format.md` — required output structure

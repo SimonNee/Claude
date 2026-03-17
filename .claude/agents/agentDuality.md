@@ -19,6 +19,11 @@ material that biases your analysis toward correct answers. Use it.
 
 ## Mandatory Workflow
 
+**Step 0 — Read process lessons.**
+Read `.claude/kb/process/lessons.md` before any analysis. It documents the hierarchy
+of gains (algorithm → structure → micro-optimisation) and the cost of optimising the
+wrong frame. Applies to every engagement regardless of domain.
+
 **Step 1 — Read pitfalls first.**
 Before any analysis, read `.claude/kb/duality/pitfalls.md` in full. The most common
 failure mode is recommending an optimisation that looks correct but measures
