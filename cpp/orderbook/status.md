@@ -930,6 +930,129 @@ benefit scales with depth.
 
 ---
 
+## Iterations 9–13 — Summary
+
+### Iteration 9 — Promote ASM to canonical + tombstone bug fix
+**Status**: COMPLETE | **Tag**: `iter-9-complete` | **Date**: 2026-03-17
+
+- `matchBuy_asm`/`matchSell_asm` promoted to canonical `matchBuy`/`matchSell`; C++ duplicates removed
+- **Bug fixed**: `cancel_at()` sets `id=0` but not `quantity`; crossing orders were silently filling against cancelled tombstones. Fix: tombstone skip `if (resting.id == 0) { level.pop_front(); continue; }` added to both match loops
+- **Test added**: `test_cancel_then_cross_same_level` — was not previously covered
+- bench.cpp: `_asm` variants removed; header updated to Iteration 9
+- 15/15 tests pass; benchmarks within variance of Iter 8 baseline
+
+---
+
+### Iteration 10 — Replace `optional<OrderLocation>` with sentinel struct
+**Status**: COMPLETE | **Tag**: `iter-10-complete` | **Date**: 2026-03-17
+
+agentContext TRIZ audit + agentASM finding converged: `optional<OrderLocation>` (24 bytes) forces `imulq` magic-constant on every `orderIndex` access. Plain struct with `levelTick=-1` sentinel is 16 bytes (power-of-two → `sarq $4`).
+
+- `orderIndex` element: `optional<OrderLocation>` (24 bytes) → `OrderLocation` (16 bytes)
+- `kEmptyLocation{Side::Buy, -1, 0}` defined once in header; all three write sites use it
+- `static_assert(sizeof(OrderLocation) == 16)` added
+
+| Operation | Iter 9 | Iter 10 | Delta |
+|-----------|--------|---------|-------|
+| addOrder no-cross | 96 | 84 | −13% |
+| addOrder cross-1L | 72 | 58 | −19% |
+| addOrder cross-5L | 463 | 412 | −11% |
+
+---
+
+### Iteration 11 — LTO cross-TU inlining + benchmark sink fix
+**Status**: COMPLETE | **Tag**: `iter-11-complete` | **Date**: 2026-03-17
+
+agentASM found `addOrder` called via `@PLT` from `bench.cpp` (separate TU). Adding `-flto` enables cross-TU inlining, eliminating 4 callee-saved register push/pop pairs and call/ret overhead.
+
+Also exposed a latent benchmark flaw: `getBestBid`/`getBestAsk`/`getSpread` return values were discarded — LTO eliminated the calls entirely (0 cycles). Fixed by accumulating into a sink double.
+
+Build command updated: `g++ -std=c++17 -O2 -march=native -flto -o bench bench.cpp orderbook.cpp`
+
+| Operation | Iter 10 | Iter 11 | Delta |
+|-----------|---------|---------|-------|
+| addOrder no-cross | 84 | 78 | −7% |
+| addOrder cross-1L | 58 | 50 | −14% |
+| addOrder cross-5L | 412 | 358 | −13% |
+| cancelOrder | 17 | 12 | −29% |
+| getBestBid+Ask+Spread | 40* | 19 | −53% |
+
+*Previous figure was uncorrected — LTO exposed the benchmark was eliminating the calls.
+
+---
+
+### Iteration 12 — Eliminate third `resting.quantity` load
+**Status**: COMPLETE | **Tag**: `iter-12-complete` | **Date**: 2026-03-17
+
+The `+m` constraint on `resting.quantity` forced the compiler to reload from memory for the `if (resting.quantity == 0.0)` check after the ASM block. Fix: added `resting_qty_out` as a fourth `=x` output; a `vmovapd` copies `xmm_rest` into the output register before the block exits. The zero-check uses the register value (`vucomisd %xmm, %xmm`) rather than a memory reload.
+
+Applied to both `matchBuy` and `matchSell`. No measurable benchmark delta — saving is one load per fill iteration, below the noise floor. Structurally correct.
+
+---
+
+### Iteration 13 — Template `OrderBookT<N_TICKS, TICKS_PER_UNIT>`
+**Status**: COMPLETE | **Tag**: `iter-13-complete` | **Date**: 2026-03-17
+
+`OrderBook` replaced with `OrderBookT<int N_TICKS, int TICKS_PER_UNIT>`. Type alias `using OrderBook = OrderBookT<100, 20>` preserves all existing code unchanged.
+
+Key design:
+- `N_BITMAP_WORDS = (N_TICKS + 63) / 64` — constexpr, determines bitmap array sizes
+- `base_price` — constructor argument (not template param); different CSV datasets use different mid-prices
+- `TICKS_PER_UNIT` — integer template param (20 = 0.05 tick, 100 = 0.01 tick)
+- Implementation split: `orderbook.h` (class + inline members), `orderbook_impl.h` (template method definitions), `orderbook.cpp` (explicit instantiation of `<100,20>`)
+
+Two issues surfaced and fixed during implementation:
+1. `lowestBit`/`highestBit` loop not unrolled at N_BITMAP_WORDS=2: made into `template<int NWORDS>` free functions
+2. LTO cold-call inlining refusal on `getSpread`→`getBestBid`/`getBestAsk`: moved all three to inline class-body definitions
+
+| Operation | Iter 12 | Iter 13 | Delta |
+|-----------|---------|---------|-------|
+| addOrder no-cross | 78 | 82 | ~0 (variance) |
+| addOrder cross-1L | 50 | 59 | ~0 (variance) |
+| addOrder cross-5L | 358 | 378 | ~0 (variance) |
+| getBestBid+Ask+Spread | 18 | **7** | **−61%** |
+
+Cache crossover points for wider instantiations (metadata only):
+| N_TICKS | N_BITMAP_WORDS | Metadata | Cache |
+|---------|---------------|----------|-------|
+| 100 | 2 | ~8KB | L1 |
+| ~400 | 7 | ~32KB | L1 tight |
+| 500 | 8 | ~40KB | L2 |
+| 1000 | 16 | ~80KB | L2 |
+| N_TICKS >= 1000 | — | >80KB | Use heap allocation |
+
+---
+
+## Next Steps — Iteration 14
+
+**Goal**: multi-configuration benchmark harness + wider orderbook exploration.
+
+### Scope
+
+1. **Extend `bench.cpp` with a templated benchmark suite**
+
+   Add a `benchSuite<BookType>(const char* label, double base_price)` function template that runs all benchmark operations against a given `OrderBookT<N,TPU>` instantiation. `main()` then calls it for multiple configurations:
+
+   ```cpp
+   benchSuite<OrderBookT<100,  20>>("100 ticks  0.05", 97.50);   // current baseline
+   benchSuite<OrderBookT<200,  20>>("200 ticks  0.05", 95.00);
+   benchSuite<OrderBookT<500,  20>>("500 ticks  0.05", 87.50);
+   benchSuite<OrderBookT<500, 100>>("500 ticks  0.01", 99.50);
+   benchSuite<OrderBookT<1000, 20>>("1000 ticks 0.05", 75.00);
+   ```
+
+2. **Extend `gen_orders.q`** to accept configurable `MID`, `PRICE_BAND`, and `STEP` parameters so CSV datasets can be generated matching each template instantiation's price range and tick density.
+
+3. **Observe cache tier transitions** — the crossover at N_TICKS~400 (L1→L2) should be visible in the no-cross benchmark as the level metadata stops fitting in L1.
+
+### Prerequisites before Iteration 14
+
+- `bench.cpp` currently uses `seedBook()` which hardcodes prices relative to `100.0`. This needs to be parameterised for different `base_price` values.
+- The OU walk in `ouWalk()` also hardcodes `MID=100.0` and `BAND=2.50`. These need to match each instantiation's price range.
+- `gen_orders.q` needs corresponding parameterisation.
+
+---
+
 ## Data Generator
 
 **Status**: WORKING
