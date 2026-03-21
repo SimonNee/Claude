@@ -112,6 +112,38 @@ order_id_t Book::add(side_t side, double price, qty_t quantity) noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// Book::add_by_tick  — tick-direct path; skips price_to_tick().
+// Used by the data-driven benchmark (loader pre-converts prices to ticks).
+// ---------------------------------------------------------------------------
+
+order_id_t Book::add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept {
+    if (side != side_t::BID && side != side_t::ASK) {
+        return NULL_IDX;
+    }
+    if (quantity == 0U) {
+        return NULL_IDX;
+    }
+    if (tick >= MAX_TICKS) {
+        return NULL_IDX;
+    }
+
+    slot_idx_t slot = arena_alloc(impl_->arena, quantity);
+    if (slot == NULL_IDX) {
+        return NULL_IDX;
+    }
+
+    book_side_t& sd = this->side(side);
+
+    if (sd.levels[tick].count == 0U) {
+        bitmap_set(sd.bitmap, tick);
+    }
+
+    queue_enqueue(sd.levels[tick], impl_->arena, slot);
+
+    return slot;
+}
+
+// ---------------------------------------------------------------------------
 // Book::cancel  (spec: Interface Specification / book_cancel)
 // ---------------------------------------------------------------------------
 
@@ -151,6 +183,18 @@ fill_result_t Book::match(side_t     aggressor_side,
                           qty_t      quantity,
                           order_id_t taker_id) noexcept {
     return Matcher::execute(*impl_, aggressor_side, price, quantity, taker_id);
+}
+
+// ---------------------------------------------------------------------------
+// Book::match_by_tick  — tick-direct path; skips price_to_tick().
+// Used by the data-driven benchmark (loader pre-converts ticks directly).
+// ---------------------------------------------------------------------------
+
+fill_result_t Book::match_by_tick(side_t     aggressor_side,
+                                  tick_t     tick,
+                                  qty_t      quantity,
+                                  order_id_t taker_id) noexcept {
+    return Matcher::execute_by_tick(*impl_, aggressor_side, tick, quantity, taker_id);
 }
 
 // ---------------------------------------------------------------------------

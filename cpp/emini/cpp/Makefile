@@ -39,7 +39,7 @@ OBJS := book.o matcher.o
 
 LIB  := libemini.a
 
-.PHONY: all lib test-objs bench-objs clean
+.PHONY: all lib test-objs bench-objs bench clean
 
 all: lib
 
@@ -54,17 +54,32 @@ book.o: book.cpp book.hpp internal.hpp matcher.hpp
 matcher.o: matcher.cpp matcher.hpp book.hpp internal.hpp
 	$(CXX) $(CXXFLAGS) -c matcher.cpp -o $@
 
+loader.o: loader.cpp loader.hpp book.hpp
+	$(CXX) $(CXXFLAGS) -c loader.cpp -o $@
+
 # Correctness objects (used by agentTest when it builds the test harness)
 test-objs:
 	$(CXX) $(CXXFLAGS_TEST) -c book.cpp    -o book_test.o
 	$(CXX) $(CXXFLAGS_TEST) -c matcher.cpp -o matcher_test.o
+	$(CXX) $(CXXFLAGS_TEST) -c loader.cpp  -o loader_test.o
 
 # Benchmark objects (used by agentTest when it builds the benchmark harness)
 bench-objs:
 	$(CXX) $(CXXFLAGS_BENCH) -c book.cpp    -o book_bench.o
 	$(CXX) $(CXXFLAGS_BENCH) -c matcher.cpp -o matcher_bench.o
+	$(CXX) $(CXXFLAGS_BENCH) -c loader.cpp  -o loader_bench.o
+
+# Data-driven benchmark binary
+bench: bench_book_cpp
+
+bench_book_cpp: bench-objs bench_book.cpp book.hpp loader.hpp internal.hpp matcher.hpp \
+                book_bench.o matcher_bench.o loader_bench.o
+	$(CXX) $(CXXFLAGS_BENCH) bench_book.cpp \
+	    book_bench.o matcher_bench.o loader_bench.o \
+	    -o bench_book_cpp
 
 clean:
 	rm -f $(OBJS) $(LIB) \
-	      book_test.o matcher_test.o \
-	      book_bench.o matcher_bench.o
+	      book_test.o matcher_test.o loader_test.o \
+	      book_bench.o matcher_bench.o loader_bench.o \
+	      bench_book_cpp

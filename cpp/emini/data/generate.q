@@ -15,6 +15,12 @@
 / The stationary std is 50 ticks so ~95% of prices land within +/-100 ticks
 / and essentially all prices stay inside the +/-200 tick active range.
 / .
+/ Prices are converted to integer ticks using BASE = 4400.0:
+/   tick = floor( (price - BASE) * 4 + 0.5 )
+/ The OU mid price 5500.0 maps to tick (5500-4400)*4 = 4400.
+/ The OU-generated price range (5447-5547) maps to ticks 1788-2588.
+/ Valid tick range: [0, 8799]  (covers +/-20% CME price limit)
+/ .
 / Runnable standalone: q generate.q
 / Output: orders.csv written to the same directory
 
@@ -27,6 +33,10 @@ MU:5500.00                   / OU long-run mean
 THETA:0.005                  / mean-reversion speed per step
 SIGMA:1.25                   / per-step diffusion (dollars)
 STAT_STD:SIGMA%sqrt 2*THETA  / theoretical stationary std = 12.50 dollars
+
+BASE:4400.0                  / tick floor: CME -20% price limit (dollars)
+TICKS_PER_DOLLAR:4           / ES has 4 ticks per dollar ($0.25/tick)
+MAX_TICK:8799                / tick ceiling: CME +20% price limit (inclusive)
 
 TOTAL_EVENTS:1000000         / total rows: ADD + CANCEL + MATCH
 SEED:42                      / random seed for reproducibility
@@ -52,6 +62,14 @@ system "S ",string SEED
 / -------------------------------------------------------------------
 
 snapTick:{[p] TICK*floor 0.5+p%TICK}
+
+/ -------------------------------------------------------------------
+/ Helper: convert dollar price to integer tick index
+/ tick = floor( (price - BASE) * TICKS_PER_DOLLAR + 0.5 )
+/ Returns long.
+/ -------------------------------------------------------------------
+
+priceToTick:{[p] `long$floor 0.5+(p-BASE)*TICKS_PER_DOLLAR}
 
 / -------------------------------------------------------------------
 / Helper: generate n standard normal variates via Box-Muller
@@ -87,8 +105,8 @@ midPrices:snapTick MU {x+(THETA*(MU-x))+(SIGMA*y)}\ ouNormals
 / -------------------------------------------------------------------
 / ADD event properties
 / Side alternates: even index = BID, odd index = ASK
-/ BID price: mid - 1 tick (one tick below mid)
-/ ASK price: mid + 1 tick (one tick above mid)
+/ BID tick: mid - 1 tick (one tick below mid)
+/ ASK tick: mid + 1 tick (one tick above mid)
 / -------------------------------------------------------------------
 
 addIdx:til ADDS_COUNT
@@ -97,6 +115,9 @@ addSides:`BID`ASK addIdx mod 2
 / Offset vector: BID gets -TICK, ASK gets +TICK
 sideOffset:(TICK*-1 1) addIdx mod 2
 addPrices:snapTick midPrices+sideOffset
+
+/ Convert ADD prices to integer ticks
+addTicks:priceToTick addPrices
 
 / Quantities: 70% small (1-5 contracts), 30% large (6-50 contracts)
 genQty:{[n]
@@ -178,8 +199,8 @@ cancelSides:raze CANCELS_PER_ADD#/:addSides
 / -------------------------------------------------------------------
 / MATCH events
 / Alternate BID/ASK aggressor.
-/ BID aggressor buys: crosses the spread, price = mid + 1 tick (hits resting ask)
-/ ASK aggressor sells: crosses the spread, price = mid - 1 tick (hits resting bid)
+/ BID aggressor buys: crosses the spread, tick = mid + 1 tick (hits resting ask)
+/ ASK aggressor sells: crosses the spread, tick = mid - 1 tick (hits resting bid)
 / -------------------------------------------------------------------
 
 matchSides:`BID`ASK (til MATCH_COUNT) mod 2
@@ -187,6 +208,9 @@ matchNormals:genNormals MATCH_COUNT
 matchMids:snapTick MU+SIGMA*matchNormals
 matchOffsets:(TICK*1 -1) matchSides=`BID
 matchPrices:snapTick matchMids+matchOffsets
+
+/ Convert MATCH prices to integer ticks
+matchTicks:priceToTick matchPrices
 
 / Match quantities: 1-20 contracts
 matchQtys:1+`long$19*MATCH_COUNT?1.0
@@ -207,52 +231,61 @@ isAddMask:nInterleaved#0b
 cancelRowsIL:where not isAddMask
 
 / Pre-allocate interleaved columns (values will all be overwritten)
+/ Tick column is long integer: ADD rows get computed ticks, CANCEL rows get 0j
 iEvtType :nInterleaved#enlist`ADD
 iEvtSide :nInterleaved#`BID
-iEvtPrice:nInterleaved#0.0
+iEvtTick :nInterleaved#0j
 iEvtQty  :nInterleaved#0j
 iEvtRef  :nInterleaved#0j
 
 / Fill ADD rows
 @[`iEvtType;  addRowsIL; :; ADDS_COUNT#enlist`ADD];
 @[`iEvtSide;  addRowsIL; :; addSides];
-@[`iEvtPrice; addRowsIL; :; addPrices];
+@[`iEvtTick;  addRowsIL; :; addTicks];
 @[`iEvtQty;   addRowsIL; :; addQtys];
 @[`iEvtRef;   addRowsIL; :; ADDS_COUNT#0j];
 
-/ Fill CANCEL rows
+/ Fill CANCEL rows: tick is 0j (integer zero), qty is 0j
 @[`iEvtType;  cancelRowsIL; :; CANCEL_COUNT#enlist`CANCEL];
 @[`iEvtSide;  cancelRowsIL; :; cancelSides];
-@[`iEvtPrice; cancelRowsIL; :; CANCEL_COUNT#0.0];
+@[`iEvtTick;  cancelRowsIL; :; CANCEL_COUNT#0j];
 @[`iEvtQty;   cancelRowsIL; :; CANCEL_COUNT#0j];
 @[`iEvtRef;   cancelRowsIL; :; cancelRefs];
 
 / Append MATCH events after the interleaved section
 allEvtType :iEvtType  ,MATCH_COUNT#enlist`MATCH
 allEvtSide :iEvtSide  ,matchSides
-allEvtPrice:iEvtPrice ,matchPrices
+allEvtTick :iEvtTick  ,matchTicks
 allEvtQty  :iEvtQty   ,matchQtys
 allEvtRef  :iEvtRef   ,MATCH_COUNT#0j
 
-/ Safety snap: ensure all prices are valid ES ticks (CANCEL rows stay 0.00)
-allEvtPrice:snapTick allEvtPrice
+/ -------------------------------------------------------------------
+/ Validation: check all non-zero ticks are within [0, MAX_TICK]
+/ CANCEL rows have tick=0j; ADD and MATCH rows must be in [0, MAX_TICK].
+/ -------------------------------------------------------------------
+
+nonZeroTicks:allEvtTick where allEvtTick>0j
+outOfRange:nonZeroTicks where not nonZeroTicks within (0j;`long$MAX_TICK)
+$[0<count outOfRange;
+  -2 "WARNING: ",( string count outOfRange)," ticks out of range [0,",( string MAX_TICK),"]: min=",( string min outOfRange)," max=",( string max outOfRange);
+  -1 "Tick range validation passed: all non-zero ticks within [0,",( string MAX_TICK),"]"
+ ]
 
 / -------------------------------------------------------------------
 / Write CSV
-/ Each column converted to string; price formatted to 2 decimal places.
-/ .Q.f[2] formats a float to 2 decimal places and returns a string.
-/ It is not vectorised so we use 'each'.
+/ Tick column is long; string converts to plain integer (e.g. "4391").
+/ No float formatting needed.
 / -------------------------------------------------------------------
 
-hdr:"event_type,side,price,quantity,ref_idx"
+hdr:"event_type,side,tick,quantity,ref_idx"
 
 colEvtType:string allEvtType
 colSide   :string allEvtSide
-colPrice  :.Q.f[2] each allEvtPrice
+colTick   :string allEvtTick
 colQty    :string allEvtQty
 colRef    :string allEvtRef
 
-rows:colEvtType,'",",'colSide,'",",'colPrice,'",",'colQty,'",",'colRef
+rows:colEvtType,'",",'colSide,'",",'colTick,'",",'colQty,'",",'colRef
 
 outPath:`:orders.csv
 outPath 0: enlist[hdr],rows
@@ -266,13 +299,13 @@ addCnt   :sum allEvtType=`ADD
 cancelCnt:sum allEvtType=`CANCEL
 matchCnt :sum allEvtType=`MATCH
 
-/ Price stats: exclude CANCEL rows (price=0.00)
-nonZeroPx:allEvtPrice where allEvtPrice>0
-pxMin :min nonZeroPx
-pxMax :max nonZeroPx
-pxMean:avg nonZeroPx
+/ Tick stats: exclude CANCEL rows (tick=0j)
+nonZeroTk:allEvtTick where allEvtTick>0j
+tkMin :min nonZeroTk
+tkMax :max nonZeroTk
+tkMean:avg nonZeroTk
 
-/ Observed OU std from ADD mid-prices
+/ Observed OU std from ADD mid-prices (still in dollars for reference)
 ouObsStd:dev midPrices
 
 actualRatio:cancelCnt%addCnt
@@ -284,9 +317,9 @@ actualRatio:cancelCnt%addCnt
 -1 "  CANCEL events       : ",string cancelCnt;
 -1 "  MATCH events        : ",string matchCnt;
 -1 "Cancel-to-add ratio   : ",.Q.f[2] actualRatio;
--1 "Price min             : ",.Q.f[2] pxMin;
--1 "Price max             : ",.Q.f[2] pxMax;
--1 "Price mean            : ",.Q.f[2] pxMean;
+-1 "Tick min (non-zero)   : ",string tkMin;
+-1 "Tick max              : ",string tkMax;
+-1 "Tick mean             : ",.Q.f[2] tkMean;
 -1 "OU stat std (theory)  : ",(.Q.f[2] STAT_STD)," dollars / ",(string`long$STAT_STD%TICK)," ticks";
 -1 "OU stat std (observed): ",(.Q.f[2] ouObsStd)," dollars / ",(string`long$ouObsStd%TICK)," ticks";
 -1 "Output               : orders.csv";

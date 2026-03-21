@@ -2,6 +2,8 @@
 #
 # Targets:
 #   all       — build libbook.a (static library)
+#   bench     — build bench_book binary (data-driven, requires orders.csv)
+#   test      — build test_book binary
 #   clean     — remove build artefacts
 #
 # Flags match the spec:
@@ -12,8 +14,7 @@
 #   -Wconversion -Wsign-conversion -Wsign-compare — enforce no-cast rule
 #   -Werror   — every warning is a build failure
 #
-# The spec states: build with -O2 -Wconversion -Werror -std=c11.
-# -march=native is added to honour the performance contract (TZCNT/LZCNT).
+# Benchmark build adds -flto for link-time optimisation (no sanitizers).
 
 CC      := gcc
 CFLAGS  := -std=c11 -O2 -march=native \
@@ -22,18 +23,27 @@ CFLAGS  := -std=c11 -O2 -march=native \
             -Wstrict-aliasing=2 \
             -Werror
 
+CFLAGS_BENCH := $(CFLAGS) -flto -D_POSIX_C_SOURCE=200809L
+
 AR      := ar
 ARFLAGS := rcs
 
-SRCS    := book.c matcher.c
-OBJS    := $(SRCS:.c=.o)
-LIB     := libbook.a
+LIB_SRCS  := book.c matcher.c
+LIB_OBJS  := $(LIB_SRCS:.c=.o)
+LIB       := libbook.a
 
-.PHONY: all clean
+LOADER_SRCS := loader.c
+LOADER_OBJS := $(LOADER_SRCS:.c=.o)
+
+.PHONY: all bench test clean
 
 all: $(LIB)
 
-$(LIB): $(OBJS)
+# ------------------------------------------------------------------
+# Library
+# ------------------------------------------------------------------
+
+$(LIB): $(LIB_OBJS)
 	$(AR) $(ARFLAGS) $@ $^
 
 book.o: book.c book.h bitmap.h matcher.h
@@ -42,5 +52,36 @@ book.o: book.c book.h bitmap.h matcher.h
 matcher.o: matcher.c matcher.h book.h bitmap.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# ------------------------------------------------------------------
+# Loader (compiled with same CFLAGS as the library)
+# ------------------------------------------------------------------
+
+loader.o: loader.c loader.h book.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# ------------------------------------------------------------------
+# Benchmark binary
+# ------------------------------------------------------------------
+
+bench: bench_book
+
+bench_book: bench_book.c book.h loader.h matcher.h \
+            book.o matcher.o loader.o
+	$(CC) $(CFLAGS_BENCH) -o $@ bench_book.c book.o matcher.o loader.o -lm
+
+# ------------------------------------------------------------------
+# Test binary
+# ------------------------------------------------------------------
+
+test: test_book
+
+test_book: test_book.c book.h matcher.h \
+           book.o matcher.o
+	$(CC) $(CFLAGS) -o $@ test_book.c book.o matcher.o -lm
+
+# ------------------------------------------------------------------
+# Clean
+# ------------------------------------------------------------------
+
 clean:
-	rm -f $(OBJS) $(LIB)
+	rm -f $(LIB_OBJS) $(LOADER_OBJS) $(LIB) bench_book test_book

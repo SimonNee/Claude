@@ -284,7 +284,80 @@ N=1 worst case (single bit at tick 8799, full 138-word scan) slower by 16 cy —
 
 ---
 
+---
+
+## Run 4 — 2026-03-21 (both — data-driven, integer tick CSV)
+
+### Changes from Run 3
+
+- CSV column `price` (float) replaced with `tick` (plain integer, multiply by 4 in q before write)
+- Loaders rewritten: tick read directly as `uint32_t` — no `price_to_tick`, no float in loader or benchmark loop
+- C: `book_add_tick` / `book_match_tick` added — benchmark calls internal tick path directly
+- C++: `add_by_tick` / `match_by_tick` added — same pattern
+- The single sanctioned `price_to_tick` cast remains in the public API for real incoming orders only
+- `BASE_PRICE = 4400.0` (tick floor) used only at `book_create` time — not in any timed path
+- Benchmark now replays 1M OU-generated events: 83,333 ADD / 833,330 CANCEL / 83,337 MATCH
+- Tick range in CSV: 4191–4586 (OU mid 5500 maps to tick 4400; active range ≈ ±200 ticks)
+
+**This is the first benchmark run on realistic domain data.**
+
+---
+
+### B1 — Add Latency
+
+| Implementation | median | p99 |
+|---|---|---|
+| C | 43 cy | 91 cy |
+| C++ | 34 cy | 77 cy |
+
+---
+
+### B2 — Cancel Latency (realistic 10:1 distribution)
+
+| Implementation | median | p99 |
+|---|---|---|
+| C | 39 cy | 64 cy |
+| C++ | 22 cy | 46 cy |
+
+Note: no queue-depth breakdown — cancel distribution comes from the OU event stream. Realistic mix of head/mid/tail cancels across the active price band.
+
+---
+
+### B3/B4 — Match Latency (data-driven)
+
+| Implementation | median | p99 |
+|---|---|---|
+| C | 176 cy | 520 cy |
+| C++ | 161 cy | 248 cy |
+
+Gap has narrowed to 15 cy (vs 27–31 cy in synthetic runs). Realistic multi-level sweeps across OU-generated book state. High p99 on C reflects occasional deep sweeps.
+
+---
+
+### B5 — best_bid Scan (realistic bitmap occupancy)
+
+| Implementation | median | p99 |
+|---|---|---|
+| C | 119 cy | 155 cy |
+| C++ | 87 cy | 153 cy |
+
+Significantly higher than synthetic runs (22–24 cy) — the OU book has realistic bitmap occupancy across the active price band, not a single isolated level. This is the correct number to track going forward.
+
+---
+
+## Current Best Numbers (Run 4 — data-driven, integer ticks)
+
+| Benchmark | C | C++ |
+|---|---|---|
+| Add | 43 cy | 34 cy |
+| Cancel (realistic) | 39 cy | 22 cy |
+| Match (data-driven) | 176 cy | 161 cy |
+| best_bid (realistic) | 119 cy | 87 cy |
+
+---
+
 ## Open Items
 
 - [ ] C doubly-linked promotion decision — **deferred to server hardware**. 53 cy at q=10 mid is 3 cy over the 50 cy threshold, within laptop noise. `isolcpus` insufficient on a mobile chip (thermal throttling, SMI, power states). Retest on deployment-class hardware (Xeon/EPYC) with IRQ affinity pinned away from the test core. Threshold and promote path unchanged — see architect-spec.md Decision Register.
 - [ ] Revisit C++ bitmap unroll if future benchmark shows N=1 worst case becoming load-bearing
+- [ ] Investigate C best_bid gap vs C++ (119 cy vs 87 cy) on realistic bitmap occupancy

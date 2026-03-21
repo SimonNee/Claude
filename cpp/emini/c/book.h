@@ -242,6 +242,32 @@ fill_result_t book_match(book_t *book, side_t aggressor_side, double price,
                          qty_t quantity, order_id_t taker_id);
 
 /*
+ * book_add_tick — place a resting order using a pre-validated integer tick.
+ *
+ * Identical to book_add but bypasses price_to_tick(). Intended for callers
+ * that already hold a validated tick_t (e.g. benchmarks replaying CSV data).
+ * The public book_add signature is unchanged.
+ *
+ * Preconditions: tick < MAX_TICKS, quantity > 0, side == BID || side == ASK.
+ * Returns NULL_IDX on any error (invalid arguments, arena exhausted).
+ */
+order_id_t book_add_tick(book_t *book, side_t side, tick_t tick, qty_t quantity);
+
+/*
+ * book_match_tick — attempt to match an aggressive order using a pre-validated
+ * integer tick. Identical to book_match but bypasses price_to_tick().
+ *
+ * Intended for callers that already hold a validated tick_t. The public
+ * book_match signature is unchanged.
+ *
+ * Preconditions: aggressor_tick < MAX_TICKS, quantity > 0,
+ *                aggressor_side == BID || aggressor_side == ASK.
+ */
+fill_result_t book_match_tick(book_t *book, side_t aggressor_side,
+                              tick_t aggressor_tick, qty_t quantity,
+                              order_id_t taker_id);
+
+/*
  * book_best_bid — tick index of the highest active bid level.
  * Returns NULL_IDX if the bid side is empty.
  */

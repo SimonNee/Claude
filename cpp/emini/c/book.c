@@ -284,6 +284,51 @@ order_id_t book_add(book_t *book, side_t side, double price, qty_t quantity)
     return slot;
 }
 
+order_id_t book_add_tick(book_t *book, side_t side, tick_t tick, qty_t quantity)
+{
+    if (book == NULL)
+        return NULL_IDX;
+    if (side != BID && side != ASK)
+        return NULL_IDX;
+    if (quantity == 0U)
+        return NULL_IDX;
+    if (tick >= MAX_TICKS)
+        return NULL_IDX;
+
+    order_node_t *node = arena_alloc(&book->arena, quantity);
+    if (node == NULL)
+        return NULL_IDX;
+
+    uint32_t slot = node->order_id;
+
+    book_side_t   *bside = &book->sides[side];
+    price_level_t *level = &bside->levels[tick];
+
+    queue_enqueue(level, bside->bitmap, tick, book->arena.nodes, slot, quantity);
+
+    return slot;
+}
+
+fill_result_t book_match_tick(book_t *book, side_t aggressor_side,
+                              tick_t aggressor_tick, qty_t quantity,
+                              order_id_t taker_id)
+{
+    fill_result_t result;
+    result.fill_count    = 0U;
+    result.remaining_qty = quantity;
+
+    if (book == NULL || quantity == 0U)
+        return result;
+    if (aggressor_side != BID && aggressor_side != ASK)
+        return result;
+    if (aggressor_tick >= MAX_TICKS)
+        return result;
+
+    matcher_execute(book, aggressor_side, aggressor_tick, quantity, taker_id,
+                    &result);
+    return result;
+}
+
 bool book_cancel(book_t *book, order_id_t order_id, side_t side, tick_t tick)
 {
     if (book == NULL)

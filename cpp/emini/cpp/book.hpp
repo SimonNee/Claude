@@ -213,6 +213,10 @@ public:
     // Place a resting order. Returns the assigned order_id, or NULL_IDX on error.
     [[nodiscard]] order_id_t add(side_t side, double price, qty_t quantity) noexcept;
 
+    // Tick-direct add: bypasses price_to_tick(). Used by the data-driven benchmark
+    // when the tick was pre-converted by the CSV loader. Not part of the public API.
+    [[nodiscard]] order_id_t add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept;
+
     // Cancel a previously placed order.
     // Caller must supply side and tick (recorded when add() returned).
     // Returns true on success, false if order is already dead or arguments invalid.
@@ -223,6 +227,14 @@ public:
                                       double price,
                                       qty_t  quantity,
                                       order_id_t taker_id) noexcept;
+
+    // Tick-direct match: bypasses price_to_tick(). Used by the data-driven
+    // benchmark when the tick was pre-converted by the CSV loader.
+    // Not part of the public API.
+    [[nodiscard]] fill_result_t match_by_tick(side_t     aggressor_side,
+                                              tick_t     tick,
+                                              qty_t      quantity,
+                                              order_id_t taker_id) noexcept;
 
     // Best price queries — defined in class body for guaranteed inlining.
     [[nodiscard]] tick_t best_bid() const noexcept {

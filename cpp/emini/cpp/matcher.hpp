@@ -40,6 +40,15 @@ public:
                                                double       price,
                                                qty_t        quantity,
                                                order_id_t   taker_id) noexcept;
+
+    // Tick-direct match: bypasses price_to_tick(). Used by the data-driven
+    // benchmark when the tick was pre-converted by the CSV loader.
+    // Not part of the public API.
+    [[nodiscard]] static fill_result_t execute_by_tick(Book::Impl&  impl,
+                                                       side_t       aggressor_side,
+                                                       tick_t       tick,
+                                                       qty_t        quantity,
+                                                       order_id_t   taker_id) noexcept;
 };
 
 } // namespace es::book

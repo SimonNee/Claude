@@ -32,30 +32,23 @@ namespace es::book {
 
 using namespace es::book::internal;
 
-fill_result_t Matcher::execute(Book::Impl& impl,
-                               side_t      aggressor_side,
-                               double      price,
-                               qty_t       quantity,
-                               order_id_t  taker_id) noexcept {
+// ---------------------------------------------------------------------------
+// match_core — shared matching loop, called after the aggressor_tick is known.
+//
+// Factored out so that execute() (double API) and execute_by_tick() (tick API)
+// share a single implementation with no code duplication.
+// ---------------------------------------------------------------------------
+
+static fill_result_t match_core(Book::Impl& impl,
+                                side_t      aggressor_side,
+                                tick_t      aggressor_tick,
+                                qty_t       quantity,
+                                order_id_t  taker_id) noexcept {
     fill_result_t result;
     result.fill_count    = 0U;
     result.remaining_qty = quantity;
 
-    // Validate arguments
-    if (aggressor_side != side_t::BID && aggressor_side != side_t::ASK) {
-        return result;
-    }
-    if (quantity == 0U) {
-        return result;
-    }
-
-    // API boundary: convert price (sanctioned cast is inside price_to_tick)
-    tick_t aggressor_tick = price_to_tick(price, impl.base_price);
-    if (aggressor_tick == TICK_INVALID) {
-        return result;
-    }
-
-    // Determine maker side (opposite of aggressor): spec says maker_side = 1 - aggressor_side.
+    // Determine maker side (opposite of aggressor).
     // agg_idx is 0 (BID) or 1 (ASK); maker_idx is the complementary value.
     // The subtraction 1U - agg_idx promotes both to unsigned int; explicit cast to uint8_t.
     uint8_t agg_idx   = static_cast<uint8_t>(aggressor_side);
@@ -144,6 +137,63 @@ fill_result_t Matcher::execute(Book::Impl& impl,
     }
 
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Matcher::execute — public double API; price_to_tick() at the boundary.
+// ---------------------------------------------------------------------------
+
+fill_result_t Matcher::execute(Book::Impl& impl,
+                               side_t      aggressor_side,
+                               double      price,
+                               qty_t       quantity,
+                               order_id_t  taker_id) noexcept {
+    fill_result_t early;
+    early.fill_count    = 0U;
+    early.remaining_qty = quantity;
+
+    if (aggressor_side != side_t::BID && aggressor_side != side_t::ASK) {
+        return early;
+    }
+    if (quantity == 0U) {
+        return early;
+    }
+
+    // API boundary: convert price (sanctioned cast is inside price_to_tick)
+    tick_t aggressor_tick = price_to_tick(price, impl.base_price);
+    if (aggressor_tick == TICK_INVALID) {
+        return early;
+    }
+
+    return match_core(impl, aggressor_side, aggressor_tick, quantity, taker_id);
+}
+
+// ---------------------------------------------------------------------------
+// Matcher::execute_by_tick — tick-direct path; skips price_to_tick().
+// Used by the data-driven benchmark when the tick was pre-converted by the
+// CSV loader. Not part of the public API.
+// ---------------------------------------------------------------------------
+
+fill_result_t Matcher::execute_by_tick(Book::Impl& impl,
+                                       side_t      aggressor_side,
+                                       tick_t      tick,
+                                       qty_t       quantity,
+                                       order_id_t  taker_id) noexcept {
+    fill_result_t early;
+    early.fill_count    = 0U;
+    early.remaining_qty = quantity;
+
+    if (aggressor_side != side_t::BID && aggressor_side != side_t::ASK) {
+        return early;
+    }
+    if (quantity == 0U) {
+        return early;
+    }
+    if (tick >= MAX_TICKS) {
+        return early;
+    }
+
+    return match_core(impl, aggressor_side, tick, quantity, taker_id);
 }
 
 } // namespace es::book

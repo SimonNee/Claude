@@ -1,27 +1,31 @@
-/* bench_book.cpp — Benchmark harness for the C++ E-mini order book.
+/* bench_book.cpp — Data-driven benchmark harness for the C++ E-mini order book.
  *
- * Mirrors bench_book.c exactly in structure so C vs C++ results are
- * directly comparable (spec: Benchmark B6 — head-to-head).
+ * Event stream is loaded from orders.csv (via loader.hpp/loader.cpp).
+ * The load is untimed. The benchmark replays the loaded event vector.
  *
  * Covers B1–B5:
- *   B1  — add latency (single-level and 100-level)
- *   B2  — cancel latency by depth q={1,5,10,50} × position {head,mid,tail}
- *   B3  — match latency, single level
- *   B4  — match latency, multi-level k={1,5,10}
- *   B5  — best_bid scan, N={1,10,50,138} active levels
+ *   B1  — add latency  (ADD events, median/p99/max cycles)
+ *   B2  — cancel latency (CANCEL events, median/p99/max cycles)
+ *   B3/B4 — match latency (MATCH events, median/p99/max cycles)
+ *   B5  — best_bid scan, called after each ADD event
  *
- * RDTSC discipline: CPUID+RDTSC start / RDTSCP+CPUID end (idioms.md Idiom 3).
- * Sink: volatile prevents elimination (Pitfall 4).
- * Cache regime: warm.
+ * RDTSC discipline: CPUID+RDTSC start / RDTSCP+CPUID end.
+ * Sink: volatile accumulator prevents call elimination (Idiom 10, Pitfall 6).
+ * Cache regime: warm (replay from pre-loaded vector — no CSV I/O on hot path).
  *
  * Build: -std=c++17 -O2 -march=native -Wall -Wextra -Wconversion
  *        -Wsign-conversion -Werror -fno-exceptions -flto
  *        (no sanitizers)
  *
- * Run: taskset -c 2 ./bench_book_cpp
+ * Run: taskset -c 2 ./bench_book_cpp [path/to/orders.csv]
+ *      Default CSV path: ../data/orders.csv
+ *
+ * NOTE: taskset -c <isolated_core> is strongly recommended for stable cycle
+ *       counts. Verify with /proc/cmdline that the core is isolcpus-isolated.
  */
 
 #include "book.hpp"
+#include "loader.hpp"
 #include "internal.hpp"
 
 #include <cstdio>
@@ -29,14 +33,13 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
-#include <cmath>
-#include <limits>
+#include <vector>
 
 using namespace es::book;
-using namespace es::book::internal;
+using namespace es::loader;
 
 // ---------------------------------------------------------------------------
-// RDTSC with serialisation (idioms.md Pitfall 10)
+// RDTSC with serialisation
 // ---------------------------------------------------------------------------
 
 static inline uint64_t rdtsc_start() noexcept {
@@ -71,310 +74,206 @@ static constexpr uint32_t MAX_SAMPLES = 1'000'000U;
 static uint64_t g_samples[MAX_SAMPLES];
 
 static void print_stats(const char* label, uint64_t* s, uint32_t n) {
+    if (n == 0U) {
+        std::printf("  %-55s  (no samples)\n", label);
+        return;
+    }
     std::sort(s, s + n);
     uint64_t med = s[n / 2U];
     uint64_t p99 = s[static_cast<uint32_t>(static_cast<double>(n) * 0.99)];
     uint64_t mx  = s[n - 1U];
-    std::printf("  %-55s  median=%4lu  p99=%5lu  max=%6lu  cycles\n",
+    std::printf("  %-55s  median=%4lu  p99=%5lu  max=%6lu  cycles  n=%u\n",
                 label,
                 static_cast<unsigned long>(med),
                 static_cast<unsigned long>(p99),
-                static_cast<unsigned long>(mx));
+                static_cast<unsigned long>(mx),
+                n);
 }
-
-// ---------------------------------------------------------------------------
-// Constants — same as C harness for identical data layout comparison
-// ---------------------------------------------------------------------------
-
-static constexpr double BASE_PRICE_B = 5500.0;
-static constexpr double PRICE_100_B  = 5525.0;  // tick 100
-static constexpr uint32_t BENCH_N    = 500'000U;
 
 // ---------------------------------------------------------------------------
 // B1 — Add latency
+//
+// For each ADD event: call book.add_by_tick(side, tick, qty).
+// The tick was pre-converted by the loader — no float touches the hot path.
+// id_map[row] records the returned order_id for later CANCEL lookups.
 // ---------------------------------------------------------------------------
 
-static void bench_B1_add() {
-    std::printf("\n[B1] Add latency — warm cache\n");
+static void bench_B1_add(Book&                         book,
+                         const std::vector<Event>&     events,
+                         std::vector<order_id_t>&      id_map) {
+    std::printf("\n[B1] Add latency — data-driven, warm cache\n");
 
-    // Single level
-    {
-        Book b(BASE_PRICE_B);
+    uint32_t n_samples = 0U;
+    volatile uint64_t sink = 0U;
 
-        // Warm-up
-        for (uint32_t i = 0U; i < 1000U; ++i) {
-            auto id = b.add(side_t::BID, PRICE_100_B, 1U);
-            (void)id;
+    uint32_t n_events = static_cast<uint32_t>(events.size());
+    for (uint32_t i = 0U; i < n_events; ++i) {
+        const Event& ev = events[i];
+        if (ev.type != EventType::ADD) {
+            continue;
         }
-        b.reset();
 
-        volatile uint64_t sink = 0;
-        for (uint32_t i = 0U; i < BENCH_N; ++i) {
-            uint64_t t0 = rdtsc_start();
-            auto id = b.add(side_t::BID, PRICE_100_B, 1U);
-            uint64_t t1 = rdtsc_end();
-            sink += static_cast<uint64_t>(id);
-            g_samples[i] = t1 - t0;
-            if (b.impl().arena.next_slot >= MAX_ORDERS - 2U) {
-                b.reset();
-            }
-        }
-        if (sink == 0xDEADC0DEDEADC0DEULL) std::abort();
-        print_stats("B1a: add single level (tick=100)", g_samples, BENCH_N);
-    }
-
-    // Multi-level: 100 ticks
-    {
-        Book b(BASE_PRICE_B);
-
-        for (uint32_t i = 0U; i < 1000U; ++i) {
-            double price = BASE_PRICE_B + static_cast<double>(i % 100U) * 0.25;
-            auto id = b.add(side_t::BID, price, 1U);
-            (void)id;
-        }
-        b.reset();
-
-        volatile uint64_t sink = 0;
-        for (uint32_t i = 0U; i < BENCH_N; ++i) {
-            double price = BASE_PRICE_B + static_cast<double>(i % 100U) * 0.25;
-            uint64_t t0 = rdtsc_start();
-            auto id = b.add(side_t::BID, price, 1U);
-            uint64_t t1 = rdtsc_end();
-            sink += static_cast<uint64_t>(id);
-            g_samples[i] = t1 - t0;
-            if (b.impl().arena.next_slot >= MAX_ORDERS - 2U) {
-                b.reset();
-            }
-        }
-        if (sink == 0xDEADC0DEDEADC0DEULL) std::abort();
-        print_stats("B1b: add multi-level (100 ticks)", g_samples, BENCH_N);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// B2 — Cancel latency by queue depth
-// ---------------------------------------------------------------------------
-
-static void bench_B2_cancel() {
-    std::printf("\n[B2] Cancel latency by queue depth — warm cache\n");
-
-    constexpr uint32_t depths[] = { 1U, 5U, 10U, 50U };
-    const char* depth_names[]   = { "q=1 ", "q=5 ", "q=10", "q=50" };
-    const char* pos_names[]     = { "head", "mid ", "tail" };
-
-    for (uint32_t di = 0; di < 4U; ++di) {
-        uint32_t q = depths[di];
-
-        for (uint32_t pi = 0; pi < 3U; ++pi) {
-            uint32_t cancel_pos;
-            if (pi == 0)      cancel_pos = 0U;
-            else if (pi == 1) cancel_pos = q / 2U;
-            else              cancel_pos = q - 1U;
-
-            Book b(BASE_PRICE_B);
-
-            order_id_t level_ids[50];
-            std::memset(level_ids, 0, sizeof(level_ids));
-
-            // Initial fill to depth q
-            for (uint32_t j = 0; j < q; ++j) {
-                level_ids[j] = b.add(side_t::ASK, PRICE_100_B, 1U);
-            }
-
-            // Helper lambda to update level_ids after a cancel+replenish
-            auto update_ids = [&](uint32_t pos, order_id_t new_id) {
-                if (pos == 0U) {
-                    for (uint32_t k = 0; k + 1U < q; ++k)
-                        level_ids[k] = level_ids[k + 1U];
-                    level_ids[q - 1U] = new_id;
-                } else if (pos == q - 1U) {
-                    level_ids[q - 1U] = new_id;
-                } else {
-                    for (uint32_t k = pos; k + 1U < q; ++k)
-                        level_ids[k] = level_ids[k + 1U];
-                    level_ids[q - 1U] = new_id;
-                }
-            };
-
-            // Warm-up: 1000 cancel/replenish cycles
-            for (uint32_t w = 0; w < 1000U; ++w) {
-                order_id_t target = level_ids[cancel_pos];
-                bool ok = b.cancel(target, side_t::ASK, 100U);
-                (void)ok;
-                auto new_id = b.add(side_t::ASK, PRICE_100_B, 1U);
-                update_ids(cancel_pos, new_id);
-            }
-
-            volatile uint32_t sink = 0;
-            for (uint32_t i = 0; i < BENCH_N; ++i) {
-                order_id_t target = level_ids[cancel_pos];
-                uint64_t t0 = rdtsc_start();
-                bool ok = b.cancel(target, side_t::ASK, 100U);
-                uint64_t t1 = rdtsc_end();
-                sink += static_cast<uint32_t>(ok);
-                g_samples[i] = t1 - t0;
-
-                auto new_id = b.add(side_t::ASK, PRICE_100_B, 1U);
-                if (new_id == NULL_IDX) {
-                    // Arena full — reset and refill
-                    b.reset();
-                    for (uint32_t j = 0; j < q; ++j)
-                        level_ids[j] = b.add(side_t::ASK, PRICE_100_B, 1U);
-                } else {
-                    update_ids(cancel_pos, new_id);
-                }
-            }
-            if (sink == 0xDEADU) std::abort();
-
-            char label[80];
-            std::snprintf(label, sizeof(label), "B2: cancel %s p=%s", depth_names[di], pos_names[pi]);
-            print_stats(label, g_samples, BENCH_N);
-
-            // Promote-decision report for q=10 mid
-            if (di == 2U && pi == 1U) {
-                std::sort(g_samples, g_samples + BENCH_N);
-                uint64_t med = g_samples[BENCH_N / 2U];
-                std::printf("  >>> PROMOTE DECISION: q=10 mid-queue median=%lu cycles "
-                            "(threshold 50) → %s\n",
-                            static_cast<unsigned long>(med),
-                            med > 50UL
-                              ? "EXCEEDS threshold — review doubly-linked promotion"
-                              : "BELOW threshold — singly-linked is adequate");
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// B3 — Match latency, single level
-// ---------------------------------------------------------------------------
-
-static void bench_B3_match_single() {
-    std::printf("\n[B3] Match latency — single level, one resting order — warm cache\n");
-
-    Book b(BASE_PRICE_B);
-    // One ASK with huge qty so it never drains
-    auto ask_id = b.add(side_t::ASK, PRICE_100_B, MAX_ORDERS);
-    (void)ask_id;
-
-    // Warm-up
-    for (uint32_t i = 0U; i < 1000U; ++i) {
-        auto r = b.match(side_t::BID, PRICE_100_B, 1U, i);
-        (void)r;
-    }
-
-    volatile uint64_t sink = 0;
-    for (uint32_t i = 0U; i < BENCH_N; ++i) {
         uint64_t t0 = rdtsc_start();
-        auto r = b.match(side_t::BID, PRICE_100_B, 1U, i);
+        order_id_t oid = book.add_by_tick(ev.side, ev.tick, ev.qty);
         uint64_t t1 = rdtsc_end();
-        sink += r.fill_count;
-        g_samples[i] = t1 - t0;
-    }
-    if (sink == 0xDEADC0DEDEADC0DEULL) std::abort();
 
-    print_stats("B3: match single level, 1 resting order", g_samples, BENCH_N);
+        sink += static_cast<uint64_t>(oid);
+        id_map[i] = oid;
+
+        if (n_samples < MAX_SAMPLES) {
+            g_samples[n_samples++] = t1 - t0;
+        }
+    }
+
+    if (sink == 0xDEADC0DEDEADC0DEULL) { std::abort(); }
+    print_stats("B1: add (data-driven, pre-converted tick)", g_samples, n_samples);
 }
 
 // ---------------------------------------------------------------------------
-// B4 — Match latency, multi-level k={1,5,10}
+// B2 — Cancel latency
+//
+// For each CANCEL event: look up id_map[ref_idx] to get the order_id, then
+// call book.cancel(). The Event struct carries the side from the CSV; the
+// tick must come from the original ADD event.
 // ---------------------------------------------------------------------------
 
-static void bench_B4_match_multi() {
-    std::printf("\n[B4] Match latency — multi-level — warm cache\n");
+static void bench_B2_cancel(Book&                         book,
+                             const std::vector<Event>&     events,
+                             const std::vector<order_id_t>& id_map) {
+    std::printf("\n[B2] Cancel latency — data-driven, warm cache\n");
 
-    constexpr uint32_t ks[]  = { 1U, 5U, 10U };
-    const char* knames[]     = { "k=1 ", "k=5 ", "k=10" };
+    uint32_t n_samples = 0U;
+    volatile uint32_t sink = 0U;
 
-    for (uint32_t ki = 0; ki < 3U; ++ki) {
-        uint32_t k = ks[ki];
-        Book b(BASE_PRICE_B);
-
-        // Warm-up
-        for (uint32_t w = 0; w < 200U; ++w) {
-            for (uint32_t level = 0; level < k; ++level) {
-                double price = BASE_PRICE_B + static_cast<double>(100U + level) * 0.25;
-                auto id = b.add(side_t::ASK, price, 1U);
-                (void)id;
-            }
-            double agg = BASE_PRICE_B + static_cast<double>(100U + k - 1U) * 0.25;
-            auto r = b.match(side_t::BID, agg, k, 0U);
-            (void)r;
-            if (b.impl().arena.next_slot >= MAX_ORDERS - k - 10U)
-                b.reset();
+    uint32_t n_events = static_cast<uint32_t>(events.size());
+    for (uint32_t i = 0U; i < n_events; ++i) {
+        const Event& ev = events[i];
+        if (ev.type != EventType::CANCEL) {
+            continue;
         }
-        b.reset();
 
-        uint32_t n = BENCH_N / k;
-        if (n > BENCH_N) n = BENCH_N;
-
-        volatile uint64_t sink = 0;
-        for (uint32_t i = 0; i < n; ++i) {
-            for (uint32_t level = 0; level < k; ++level) {
-                double price = BASE_PRICE_B + static_cast<double>(100U + level) * 0.25;
-                auto id = b.add(side_t::ASK, price, 1U);
-                (void)id;
-            }
-            double agg = BASE_PRICE_B + static_cast<double>(100U + k - 1U) * 0.25;
-
-            uint64_t t0 = rdtsc_start();
-            auto r = b.match(side_t::BID, agg, k, i);
-            uint64_t t1 = rdtsc_end();
-            sink += r.fill_count;
-            g_samples[i] = t1 - t0;
-
-            if (b.impl().arena.next_slot >= MAX_ORDERS - k - 10U)
-                b.reset();
+        uint32_t add_row = ev.ref_idx;
+        if (add_row >= n_events) {
+            continue;
         }
-        if (sink == 0xDEADC0DEDEADC0DEULL) std::abort();
 
-        char label[80];
-        std::snprintf(label, sizeof(label), "B4: match %s levels", knames[ki]);
-        print_stats(label, g_samples, n);
+        order_id_t oid = id_map[add_row];
+        if (oid == NULL_IDX) {
+            // Order was never successfully added or already cancelled.
+            continue;
+        }
+
+        // Retrieve the tick from the original ADD event.
+        tick_t add_tick = events[add_row].tick;
+
+        uint64_t t0 = rdtsc_start();
+        bool ok = book.cancel(oid, ev.side, add_tick);
+        uint64_t t1 = rdtsc_end();
+
+        sink += static_cast<uint32_t>(ok);
+
+        if (n_samples < MAX_SAMPLES) {
+            g_samples[n_samples++] = t1 - t0;
+        }
+
+        // Note: duplicate cancels (same ref_idx appearing multiple times,
+        // possible in the bootstrap phase of the generator) are naturally
+        // rejected by book.cancel() via the DEAD_FLAG check on the node.
+        // No id_map mutation needed here.
     }
+
+    if (sink == 0xDEADU) { std::abort(); }
+    print_stats("B2: cancel (data-driven, realistic distribution)", g_samples, n_samples);
+}
+
+// ---------------------------------------------------------------------------
+// B3/B4 — Match latency
+//
+// For each MATCH event: call book.match_by_tick() with the tick read directly
+// from the CSV. No float arithmetic anywhere in the timed or untimed region.
+//
+// NOTE: The MATCH events reference the resting book state produced by
+// the preceding ADD/CANCEL replay. Some matches may find no resting orders
+// if cancels exhausted a level; fill_count=0 in that case is valid and
+// still exercises the bitmap scan path.
+// ---------------------------------------------------------------------------
+
+static void bench_B3B4_match(Book&                     book,
+                              const std::vector<Event>& events) {
+    std::printf("\n[B3/B4] Match latency — data-driven, warm cache\n");
+
+    uint32_t n_samples = 0U;
+    volatile uint64_t sink = 0U;
+
+    // taker_id cycles through a fixed range — not meaningful for perf, just
+    // supplies a non-zero value so fill records are non-trivially populated.
+    order_id_t taker_id = 0U;
+
+    uint32_t n_events = static_cast<uint32_t>(events.size());
+    for (uint32_t i = 0U; i < n_events; ++i) {
+        const Event& ev = events[i];
+        if (ev.type != EventType::MATCH) {
+            continue;
+        }
+
+        uint64_t t0 = rdtsc_start();
+        fill_result_t r = book.match_by_tick(ev.side, ev.tick, ev.qty, taker_id);
+        uint64_t t1 = rdtsc_end();
+
+        sink += static_cast<uint64_t>(r.fill_count);
+
+        if (n_samples < MAX_SAMPLES) {
+            g_samples[n_samples++] = t1 - t0;
+        }
+
+        ++taker_id;
+        if (taker_id >= MAX_ORDERS) { taker_id = 0U; }
+    }
+
+    if (sink == 0xDEADC0DEDEADC0DEULL) { std::abort(); }
+    print_stats("B3/B4: match (data-driven)", g_samples, n_samples);
 }
 
 // ---------------------------------------------------------------------------
 // B5 — best_bid scan
+//
+// Called after each ADD event in a second pass over the loaded event stream.
+// Times book.best_bid() immediately after the add, capturing realistic
+// bitmap occupancy from the replayed ADD/CANCEL stream.
 // ---------------------------------------------------------------------------
 
-static void bench_B5_best_bid() {
-    std::printf("\n[B5] best_bid scan latency — bitmap warm in L1\n");
+static void bench_B5_best_bid(Book&                     book,
+                               const std::vector<Event>& events,
+                               const std::vector<order_id_t>& id_map) {
+    std::printf("\n[B5] best_bid scan — called after each ADD event\n");
 
-    constexpr uint32_t ns[]  = { 1U, 10U, 50U, 138U };
-    const char* nnames[]     = { "N=1  ", "N=10 ", "N=50 ", "N=138" };
+    uint32_t n_samples = 0U;
+    volatile uint64_t sink = 0U;
 
-    for (uint32_t ni = 0; ni < 4U; ++ni) {
-        uint32_t nlevels = ns[ni];
-        Book b(BASE_PRICE_B);
-
-        for (uint32_t j = 0; j < nlevels; ++j) {
-            uint32_t tick = (j * (MAX_TICKS - 1U)) / (nlevels > 1U ? nlevels - 1U : 1U);
-            double price = BASE_PRICE_B + static_cast<double>(tick) * 0.25;
-            auto id = b.add(side_t::BID, price, 1U);
-            (void)id;
+    uint32_t n_events = static_cast<uint32_t>(events.size());
+    for (uint32_t i = 0U; i < n_events; ++i) {
+        const Event& ev = events[i];
+        if (ev.type != EventType::ADD) {
+            continue;
+        }
+        if (id_map[i] == NULL_IDX) {
+            // Add failed (arena full); skip.
+            continue;
         }
 
-        // Warm-up
-        for (uint32_t i = 0; i < 1000U; ++i) {
-            auto t = b.best_bid();
-            (void)t;
-        }
+        uint64_t t0 = rdtsc_start();
+        tick_t bb = book.best_bid();
+        uint64_t t1 = rdtsc_end();
 
-        volatile uint64_t sink = 0;
-        for (uint32_t i = 0; i < BENCH_N; ++i) {
-            uint64_t t0 = rdtsc_start();
-            auto t = b.best_bid();
-            uint64_t t1 = rdtsc_end();
-            sink += static_cast<uint64_t>(t);
-            g_samples[i] = t1 - t0;
-        }
-        if (sink == 0xDEADC0DEDEADC0DEULL) std::abort();
+        sink += static_cast<uint64_t>(bb);
 
-        char label[80];
-        std::snprintf(label, sizeof(label), "B5: best_bid %s active levels", nnames[ni]);
-        print_stats(label, g_samples, BENCH_N);
+        if (n_samples < MAX_SAMPLES) {
+            g_samples[n_samples++] = t1 - t0;
+        }
     }
+
+    if (sink == 0xDEADC0DEDEADC0DEULL) { std::abort(); }
+    print_stats("B5: best_bid (post-add, data-driven bitmap occupancy)", g_samples, n_samples);
 }
 
 // ---------------------------------------------------------------------------
@@ -400,17 +299,17 @@ static void print_hw_info() {
     }
 
     f = popen("cat /sys/devices/system/cpu/cpu0/cache/index0/size 2>/dev/null", "r");
-    if (f) { if (std::fgets(line, sizeof(line), f)) std::printf("L1d: %s", line); pclose(f); }
+    if (f) { if (std::fgets(line, sizeof(line), f)) { std::printf("L1d: %s", line); } pclose(f); }
 
     f = popen("cat /sys/devices/system/cpu/cpu0/cache/index2/size 2>/dev/null", "r");
-    if (f) { if (std::fgets(line, sizeof(line), f)) std::printf("L2:  %s", line); pclose(f); }
+    if (f) { if (std::fgets(line, sizeof(line), f)) { std::printf("L2:  %s", line); } pclose(f); }
 
     f = popen("cat /sys/devices/system/cpu/cpu0/cache/index3/size 2>/dev/null", "r");
-    if (f) { if (std::fgets(line, sizeof(line), f)) std::printf("L3:  %s", line); pclose(f); }
+    if (f) { if (std::fgets(line, sizeof(line), f)) { std::printf("L3:  %s", line); } pclose(f); }
 
-    std::printf("Cache regime: WARM (repeated operations on same data in L1/L2)\n");
-    std::printf("Core:         pinned to core 2 (taskset -c 2)\n");
-    std::printf("isolcpus:     not confirmed (check /proc/cmdline)\n");
+    std::printf("Cache regime: WARM (replay from pre-loaded vector)\n");
+    std::printf("Core:         pin with taskset -c <isolated_core>\n");
+    std::printf("isolcpus:     check /proc/cmdline\n");
     std::printf("Sanitizers:   NONE (bench build)\n");
     std::printf("CXXFLAGS:     -std=c++17 -O2 -march=native -flto\n\n");
 }
@@ -419,18 +318,96 @@ static void print_hw_info() {
 // main
 // ---------------------------------------------------------------------------
 
-int main() {
+int main(int argc, char* argv[]) {
+    const char* csv_path = (argc >= 2) ? argv[1] : "../data/orders.csv";
+
     print_hw_info();
 
-    std::printf("=== C++ Implementation Benchmarks ===\n");
-    std::printf("  N=%u iterations per benchmark\n", BENCH_N);
-    std::printf("  Reporting: median / p99 / max cycles\n\n");
+    // -------------------------------------------------------------------
+    // Phase 1 — Load CSV (untimed).
+    // -------------------------------------------------------------------
 
-    bench_B1_add();
-    bench_B2_cancel();
-    bench_B3_match_single();
-    bench_B4_match_multi();
-    bench_B5_best_bid();
+    std::printf("=== Loading CSV: %s ===\n", csv_path);
+    std::vector<Event> events = load_csv(csv_path);
+
+    if (events.empty()) {
+        std::fprintf(stderr, "bench: no events loaded — aborting\n");
+        return 1;
+    }
+
+    const uint32_t n_events = static_cast<uint32_t>(events.size());
+
+    // id_map[i] maps event row i to the order_id assigned by book.add_by_tick().
+    // Initialised to NULL_IDX; only ADD rows receive a non-NULL_IDX entry.
+    std::vector<order_id_t> id_map(n_events, NULL_IDX);
+
+    // Count event types for reporting.
+    uint32_t n_add = 0U, n_cancel = 0U, n_match = 0U;
+    for (const Event& ev : events) {
+        switch (ev.type) {
+            case EventType::ADD:    ++n_add;    break;
+            case EventType::CANCEL: ++n_cancel; break;
+            case EventType::MATCH:  ++n_match;  break;
+        }
+    }
+
+    std::printf("  Events: %u ADD, %u CANCEL, %u MATCH\n\n",
+                n_add, n_cancel, n_match);
+
+    std::printf("=== C++ Data-Driven Benchmarks ===\n");
+    std::printf("  Reporting: median / p99 / max cycles\n");
+
+    // -------------------------------------------------------------------
+    // Phase 2 — B1: replay ADD events; populate id_map.
+    // -------------------------------------------------------------------
+
+    // base_price is the double anchor for the public add()/match() API.
+    // The data-driven benchmark uses add_by_tick/match_by_tick exclusively,
+    // so this value is never exercised on the hot path; it must be valid.
+    static constexpr double BOOK_BASE_PRICE = 4400.0;
+    Book book(BOOK_BASE_PRICE);
+    bench_B1_add(book, events, id_map);
+
+    // -------------------------------------------------------------------
+    // Phase 3 — B2: replay CANCEL events using id_map from B1.
+    // B2 runs on the same book state produced by B1 (realistic).
+    // Duplicate cancel attempts are rejected by DEAD_FLAG in book.cancel().
+    // -------------------------------------------------------------------
+
+    bench_B2_cancel(book, events, id_map);
+
+    // -------------------------------------------------------------------
+    // Phase 4 — B3/B4: replay MATCH events.
+    // Runs on the book state after B1+B2 (adds placed, cancels applied).
+    // -------------------------------------------------------------------
+
+    bench_B3B4_match(book, events);
+
+    // -------------------------------------------------------------------
+    // Phase 5 — B5: best_bid scan after each ADD.
+    // We rebuild the book from scratch (reset) to get a clean bitmap state,
+    // then replay the ADD stream, calling best_bid after each add.
+    // The cancel/match replay is skipped here — B5 measures best_bid
+    // bitmap scan cost against the ADD-only occupancy pattern.
+    // -------------------------------------------------------------------
+
+    book.reset();
+
+    // Replay ADDs only into a fresh id_map (B5 doesn't need cancel linkage).
+    std::vector<order_id_t> id_map_b5(n_events, NULL_IDX);
+    for (uint32_t i = 0U; i < n_events; ++i) {
+        const Event& ev = events[i];
+        if (ev.type == EventType::ADD) {
+            id_map_b5[i] = book.add_by_tick(ev.side, ev.tick, ev.qty);
+            if (book.impl().arena.next_slot >= MAX_ORDERS - 2U) {
+                // Arena nearly full — stop populating. B5 measures whatever
+                // bitmap state was reached; partial replay is still realistic.
+                break;
+            }
+        }
+    }
+
+    bench_B5_best_bid(book, events, id_map_b5);
 
     return 0;
 }
