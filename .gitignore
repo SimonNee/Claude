@@ -107,3 +107,9 @@ kdb/reference/
 # Hidden projects
 cpp/STL/
 cpp/ImGui/
+
+# Generated data and compiled binaries
+cpp/orderbook/data/orders.csv
+cpp/orderbook/main
+cpp/orderbook/tests
+cpp/orderbook/bench
