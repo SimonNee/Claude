@@ -134,14 +134,13 @@ static_assert(sizeof(arena_t) == 16'000'004U, "arena_t layout changed");
 // ---------------------------------------------------------------------------
 
 // Returns the lowest set bit index, or -1 if all zero.
-// Template on NWORDS so #pragma GCC unroll fires at compile time.
+// Template on NWORDS so the loop bound is a compile-time constant.
 // Loop variable is int to avoid uint32_t->int narrowing in the return expression.
 // NWORDS fits in int (138 << INT_MAX), so the cast is always safe.
 template<uint32_t NWORDS>
 inline int bitmap_lowest(const uint64_t* bits) noexcept {
     static_assert(NWORDS <= 0x7FFF'FFFFU, "NWORDS exceeds int range");
     constexpr int NWORDS_I = static_cast<int>(NWORDS);
-#pragma GCC unroll 64
     for (int w = 0; w < NWORDS_I; ++w) {
         if (bits[static_cast<uint32_t>(w)]) {
             return w * 64 + __builtin_ctzll(bits[static_cast<uint32_t>(w)]);
@@ -156,7 +155,6 @@ template<uint32_t NWORDS>
 inline int bitmap_highest(const uint64_t* bits) noexcept {
     static_assert(NWORDS <= 0x7FFF'FFFFU, "NWORDS exceeds int range");
     constexpr int NWORDS_I = static_cast<int>(NWORDS);
-#pragma GCC unroll 64
     for (int w = NWORDS_I - 1; w >= 0; --w) {
         if (bits[static_cast<uint32_t>(w)]) {
             return w * 64 + 63 - __builtin_clzll(bits[static_cast<uint32_t>(w)]);

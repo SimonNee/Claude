@@ -191,7 +191,100 @@ O(k) scaling confirmed. Remaining gap (~33 cy) attributed to C++ fully-unrolled 
 
 ---
 
+---
+
+## Run 3 — 2026-03-21 (C++ only — bitmap unroll pragma removed)
+
+### Changes from Run 1
+
+- `#pragma GCC unroll 64` removed from `bitmap_lowest<138>` and `bitmap_highest<138>` in `book.hpp`
+- Plain counted loops replacing 400+ instruction fully-unrolled bodies
+- C implementation unchanged from Run 2
+
+**Rationale**: agentDuality verdict — E-mini trades in ±200-tick window (4 bitmap words). Early-exit dominates; full 138-word scan only on empty side. Full unroll imposed 20× I-cache footprint for zero common-case benefit.
+
+---
+
+### B1 — Add Latency (C++ unchanged)
+
+| Variant | C++ median | C++ p99 |
+|---|---|---|
+| Single level (tick=100) | 42 cy | 48 cy |
+| Multi-level (100 ticks) | 42 cy | 48 cy |
+
+---
+
+### B2 — Cancel Latency (C++ only)
+
+| q | position | C++ Run 1 | C++ Run 3 | Delta |
+|---|---|---|---|---|
+| 1 | head | 28 cy | 28 cy | — |
+| 1 | mid | 28 cy | 28 cy | — |
+| 1 | tail | 27 cy | 28 cy | — |
+| 5 | head | 26 cy | 26 cy | — |
+| 5 | mid | 34 cy | 34 cy | — |
+| 5 | tail | 42 cy | 44 cy | — |
+| **10** | **head** | **27 cy** | **28 cy** | — |
+| **10** | **mid** | **46 cy** | **47 cy** | — |
+| **10** | **tail** | **64 cy** | **65 cy** | — |
+| 50 | head | 26 cy | 28 cy | — |
+| 50 | mid | 133 cy | 133 cy | — |
+| 50 | tail | 238 cy | 238 cy | — |
+
+C++ singly-linked verdict unchanged: 47 cy at q=10 mid — below 50 cy threshold.
+
+---
+
+### B3 — Match Latency (Single Level)
+
+| Implementation | Run 1 | Run 3 | Delta |
+|---|---|---|---|
+| C++ | 40 cy | 42 cy | +2 cy (noise) |
+| C (Run 2) | 73 cy | — | — |
+
+---
+
+### B4 — Match Latency (Multi-Level)
+
+| k | C++ Run 1 | C++ Run 3 | Delta |
+|---|---|---|---|
+| 1 | 47 cy | 49 cy | +2 cy (noise) |
+| 5 | 105 cy | 102 cy | −3 cy (noise) |
+| 10 | 175 cy | 174 cy | −1 cy (noise) |
+
+Common path unaffected. agentDuality verdict confirmed.
+
+---
+
+### B5 — best_bid Scan
+
+| N | C++ Run 1 | C++ Run 3 | Delta |
+|---|---|---|---|
+| 1 (full scan) | 107 cy | 123 cy | +16 cy — expected, rare path |
+| 10 | 22 cy | 24 cy | noise |
+| 50 | 22 cy | 24 cy | noise |
+| 138 | 22 cy | 24 cy | noise |
+
+N=1 worst case (single bit at tick 8799, full 138-word scan) slower by 16 cy — unrolled path loses advantage on a complete scan. This is the rare/empty-side case; no action.
+
+---
+
+## Current Best Numbers (post all fixes)
+
+| Benchmark | C | C++ |
+|---|---|---|
+| Add single level | 42 cy | 42 cy |
+| Add multi-level | 48 cy | 42 cy |
+| Cancel q=1 | 29 cy | 28 cy |
+| Cancel q=10 mid | 53 cy | 47 cy |
+| Match single level | 73 cy | 42 cy |
+| Match k=5 | 141 cy | 102 cy |
+| Match k=10 | 209 cy | 174 cy |
+| best_bid (live book) | 22 cy | 24 cy |
+
+---
+
 ## Open Items
 
-- [ ] Rerun B2 cancel benchmark with `isolcpus=2` to resolve C doubly-linked promotion decision (53 cy vs 50 cy threshold, within OS noise)
-- [ ] Remaining B3/B4 C vs C++ gap (~33 cy) — attributed to C++ unrolled bitmap scan; no action planned unless gap widens
+- [ ] Rerun B2 cancel (C) with `isolcpus=2` to resolve doubly-linked promotion decision (53 cy vs 50 cy threshold, within OS noise)
+- [ ] Revisit C++ bitmap unroll if future benchmark shows N=1 worst case becoming load-bearing
