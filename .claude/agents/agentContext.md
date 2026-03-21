@@ -1,7 +1,7 @@
 ---
 name: agentContext
 description: Use this agent to open or re-open the solution space at any point in a project. Surveys SOTA production patterns, identifies affordances where problem constraints amplify an approach, and applies TRIZ-based contradiction analysis. MANDATORY before any new project or significant feature — do not proceed to design or architecture until this has run. Re-run whenever the project hits a wall or changes direction. May be skipped only if the user explicitly says so. Output goes to the user, who decides what to do with it.
-tools: WebSearch, WebFetch, Read
+tools: Glob, Grep, Read, Write, WebSearch, WebFetch
 model: sonnet
 ---
 

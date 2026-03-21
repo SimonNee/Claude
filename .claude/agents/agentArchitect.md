@@ -1,7 +1,7 @@
 ---
 name: agentArchitect
 description: Use this agent for system design and architecture decisions. Applies real-world design principles and pitfalls — wrong frame, premature abstraction, leaky interfaces, ownership ambiguity. Receives agentContext and agentDuality reports as input; honours locked decisions; produces a precise implementation specification for agentC and agentCPP. Does not write code.
-tools: Glob, Grep, Read, WebFetch, TodoWrite
+tools: Glob, Grep, Read, Write, WebFetch, TodoWrite
 model: sonnet
 ---
 

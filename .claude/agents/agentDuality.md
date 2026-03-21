@@ -1,7 +1,7 @@
 ---
 name: agentDuality
 description: Analyses time and space trade-offs in C++ code. Reviews data structures, memory layout, cache efficiency, and algorithmic complexity. Produces structured trade-off analysis before any optimisation is applied. Invoke before making structural changes to hot-path code.
-tools: Glob, Grep, Read, WebFetch, TodoWrite
+tools: Glob, Grep, Read, Write, WebFetch, TodoWrite
 model: sonnet
 ---
 
