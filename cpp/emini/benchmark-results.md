@@ -1,0 +1,197 @@
+# E-mini Orderbook — Benchmark Results
+
+## Hardware & Build
+
+| Field | Value |
+|---|---|
+| CPU | Intel Core i9-10980HK @ 2.40 GHz |
+| L1d / L1i | 32 KB / 32 KB |
+| L2 | 256 KB (unified) |
+| L3 | 16 MB |
+| Compiler | GCC 12.2.0 (Debian) |
+| C flags | `-std=c11 -O2 -march=native -flto` |
+| C++ flags | `-std=c++17 -O2 -march=native -flto -fno-exceptions` |
+| Core pinned | Core 2 (`taskset -c 2`) |
+| `isolcpus` | **Not set** — results may include minor OS noise |
+| Sanitizers | None (bench build) |
+| Cache regime | Warm |
+| Iterations | 500,000 per benchmark |
+
+---
+
+## Run 1 — 2026-03-21
+
+### sizeof(Book::Impl) = 16,283,824 bytes
+
+Derivation: 2 × 141,904 (sides) + 16,000,004 (arena) + 4 (pad) + 8 (base_price) = 16,283,824
+
+---
+
+### B1 — Add Latency
+
+| Variant | C median | C p99 | C max | C++ median | C++ p99 | C++ max |
+|---|---|---|---|---|---|---|
+| Single level (tick=100) | 42 cy | 50 cy | 109,818 cy | 44 cy | 60 cy | 115,144 cy |
+| Multi-level (100 ticks) | 48 cy | 54 cy | 1,330 cy | 42 cy | 53 cy | 124,283 cy |
+
+Spec target: <50 cy median. Both implementations at or within target.
+
+---
+
+### B2 — Cancel Latency by Queue Depth
+
+| q | position | C median | C p99 | C++ median | C++ p99 |
+|---|---|---|---|---|---|
+| 1 | head | 29 cy | 32 cy | 28 cy | 35 cy |
+| 1 | mid | 30 cy | 33 cy | 28 cy | 34 cy |
+| 1 | tail | 29 cy | 33 cy | 27 cy | 31 cy |
+| 5 | head | 28 cy | 31 cy | 26 cy | 29 cy |
+| 5 | mid | 38 cy | 45 cy | 34 cy | 36 cy |
+| 5 | tail | 48 cy | 52 cy | 42 cy | 45 cy |
+| **10** | **head** | **28 cy** | **31 cy** | **27 cy** | **30 cy** |
+| **10** | **mid** | **52 cy** | **55 cy** | **46 cy** | **49 cy** |
+| **10** | **tail** | **70 cy** | **77 cy** | **64 cy** | **69 cy** |
+| 50 | head | 28 cy | 31 cy | 26 cy | 29 cy |
+| 50 | mid | 138 cy | 145 cy | 133 cy | 137 cy |
+| 50 | tail | 244 cy | 260 cy | 238 cy | 250 cy |
+
+#### Doubly-Linked Promotion Decision (threshold: 50 cy at q=10 mid, warm)
+
+| Implementation | q=10 mid median | vs. threshold | Verdict |
+|---|---|---|---|
+| C | 52 cy | +2 cy OVER | Promotion review warranted — DEFERRED (`isolcpus` retest first) |
+| C++ | 46 cy | -4 cy UNDER | Singly-linked adequate |
+
+**Note**: `isolcpus` was not active during this run. The 2-cycle margin in C is within OS noise range. Retest with `isolcpus=2` before acting on the promotion path.
+
+---
+
+### B3 — Match Latency (Single Level)
+
+| Implementation | median | p99 |
+|---|---|---|
+| C | 100 cy | 105 cy |
+| C++ | 40 cy | 45 cy |
+
+Note: C result includes full `matcher_execute` → bitmap scan → level drain path on every call. C++ result more closely matches spec target of 15–40 cy.
+
+---
+
+### B4 — Match Latency (Multi-Level, k resting orders consumed)
+
+| k | C median | C p99 | C++ median | C++ p99 |
+|---|---|---|---|---|
+| 1 | 105 cy | 111 cy | 47 cy | 52 cy |
+| 5 | 160 cy | 193 cy | 105 cy | 145 cy |
+| 10 | 230 cy | 268 cy | 175 cy | 211 cy |
+
+O(k) scaling confirmed in both implementations.
+
+---
+
+### B5 — best_bid Scan (N active levels)
+
+| N | C median | C p99 | C++ median | C++ p99 |
+|---|---|---|---|---|
+| 1 | 204 cy | 393 cy | 107 cy | 109 cy |
+| 10 | 22 cy | 26 cy | 22 cy | 24 cy |
+| 50 | 22 cy | 25 cy | 22 cy | 25 cy |
+| 138 | 22 cy | 25 cy | 22 cy | 24 cy |
+
+Bitmap is L1-resident as expected (22 cy flat at N≥10). N=1 outlier: single bit at high tick forces scan through all 138 words. C N=1 higher than C++ (204 cy vs 107 cy) — different codegen for bitmap scan direction.
+
+---
+
+## Correctness (Run 1)
+
+| | C | C++ |
+|---|---|---|
+| Tests | 32/32 PASS | 33/33 PASS |
+| ASAN | Clean | Clean |
+| UBSAN | Clean | Clean |
+
+---
+
+---
+
+## Run 2 — 2026-03-21 (C only — after bitmap inlining + fill_result_t fix)
+
+### Changes from Run 1
+
+- **Fix 1**: `bitmap_best_ask` / `bitmap_best_bid` moved to `bitmap.h` as `static inline` — now inlined into `matcher_execute` instead of PLT calls
+- **Fix 2**: `matcher_execute` changed to `void` with `fill_result_t *out` output parameter — eliminates 1032-byte `memcpy` on every return
+
+C++ implementation unchanged.
+
+---
+
+### B1 — Add Latency (C, unchanged)
+
+| Variant | C median | C p99 |
+|---|---|---|
+| Single level (tick=100) | 42 cy | 47 cy |
+| Multi-level (100 ticks) | 48 cy | 52 cy |
+
+No change expected or observed.
+
+---
+
+### B2 — Cancel Latency (C, unchanged)
+
+| q | position | C median | C p99 |
+|---|---|---|---|
+| 1 | head | 30 cy | 34 cy |
+| 1 | mid | 30 cy | 34 cy |
+| 1 | tail | 30 cy | 33 cy |
+| 5 | head | 28 cy | 31 cy |
+| 5 | mid | 38 cy | 44 cy |
+| 5 | tail | 48 cy | 52 cy |
+| **10** | **head** | **29 cy** | **32 cy** |
+| **10** | **mid** | **53 cy** | **57 cy** |
+| **10** | **tail** | **70 cy** | **75 cy** |
+| 50 | head | 29 cy | 32 cy |
+| 50 | mid | 139 cy | 151 cy |
+| 50 | tail | 244 cy | 266 cy |
+
+Doubly-linked decision unchanged — still deferred pending `isolcpus` retest.
+
+---
+
+### B3 — Match Latency (Single Level)
+
+| Implementation | Run 1 median | Run 2 median | Delta | p99 |
+|---|---|---|---|---|
+| C | 100 cy | **73 cy** | **−27 cy** | 81 cy |
+| C++ | 40 cy | 40 cy | — | 45 cy |
+
+Gap closed from 60 cy to 33 cy.
+
+---
+
+### B4 — Match Latency (Multi-Level)
+
+| k | C Run 1 | C Run 2 | Delta | C++ (Run 1) |
+|---|---|---|---|---|
+| 1 | 105 cy | **74 cy** | **−31 cy** | 47 cy |
+| 5 | 160 cy | **141 cy** | **−19 cy** | 105 cy |
+| 10 | 230 cy | **209 cy** | **−21 cy** | 175 cy |
+
+O(k) scaling confirmed. Remaining gap (~33 cy) attributed to C++ fully-unrolled bitmap scan winning on sparse books.
+
+---
+
+### B5 — best_bid Scan (unchanged)
+
+| N | C median | C p99 |
+|---|---|---|
+| 1 | 205 cy | 250 cy |
+| 10 | 24 cy | 26 cy |
+| 50 | 22 cy | 26 cy |
+| 138 | 22 cy | 26 cy |
+
+---
+
+## Open Items
+
+- [ ] Rerun B2 cancel benchmark with `isolcpus=2` to resolve C doubly-linked promotion decision (53 cy vs 50 cy threshold, within OS noise)
+- [ ] Remaining B3/B4 C vs C++ gap (~33 cy) — attributed to C++ unrolled bitmap scan; no action planned unless gap widens
