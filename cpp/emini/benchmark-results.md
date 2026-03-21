@@ -286,5 +286,5 @@ N=1 worst case (single bit at tick 8799, full 138-word scan) slower by 16 cy —
 
 ## Open Items
 
-- [ ] Rerun B2 cancel (C) with `isolcpus=2` to resolve doubly-linked promotion decision (53 cy vs 50 cy threshold, within OS noise)
+- [ ] C doubly-linked promotion decision — **deferred to server hardware**. 53 cy at q=10 mid is 3 cy over the 50 cy threshold, within laptop noise. `isolcpus` insufficient on a mobile chip (thermal throttling, SMI, power states). Retest on deployment-class hardware (Xeon/EPYC) with IRQ affinity pinned away from the test core. Threshold and promote path unchanged — see architect-spec.md Decision Register.
 - [ ] Revisit C++ bitmap unroll if future benchmark shows N=1 worst case becoming load-bearing
