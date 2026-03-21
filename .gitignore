@@ -103,3 +103,7 @@ datasets/
 credentials.json
 kdb/phrases/
 kdb/reference/
+
+# Hidden projects
+cpp/STL/
+cpp/ImGui/
