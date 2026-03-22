@@ -232,12 +232,15 @@ inline int bitmap_lowest_h(const book_side_t& side) noexcept {
         uint64_t word = side.bitmap[bmap_word];
         if (word == 0U) {
             // Summary bit was set but the flat-bitmap word is zero — should not
-            // happen with synchronous updates; treat as empty.
-            return -1;
+            // happen with synchronous updates; skip and keep scanning.
+            continue;
         }
         // Tick = bmap_word * 64 + bit_within_word
         int tick_raw = static_cast<int>(bmap_word) * 64
                        + __builtin_ctzll(word);
+        if (tick_raw >= static_cast<int>(MAX_TICKS)) {
+            return -1;
+        }
         return tick_raw;
     }
     return -1;
@@ -255,17 +258,19 @@ inline int bitmap_highest_h(const book_side_t& side) noexcept {
         uint32_t sb        = 63U - static_cast<uint32_t>(__builtin_clzll(side.summary[sw]));
         uint32_t bmap_word = sw * 64U + sb;
         if (bmap_word >= BITMAP_WORDS) {
-            // sb pointed past the valid range; step down within this summary word.
-            // This happens when BITMAP_WORDS % 64 != 0 and the summary word has a
-            // high bit for a non-existent bitmap word.  Find the highest valid one.
-            bmap_word = BITMAP_WORDS - 1U;
+            // sb pointed past the valid range — summary inconsistency; treat as empty.
+            return -1;
         }
         uint64_t word = side.bitmap[bmap_word];
         if (word == 0U) {
-            return -1;
+            // Summary bit set but bitmap word is zero — skip and keep scanning.
+            continue;
         }
         int tick_raw = static_cast<int>(bmap_word) * 64
                        + 63 - __builtin_clzll(word);
+        if (tick_raw >= static_cast<int>(MAX_TICKS)) {
+            return -1;
+        }
         return tick_raw;
     }
     return -1;

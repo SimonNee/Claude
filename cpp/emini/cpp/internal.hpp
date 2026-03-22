@@ -176,7 +176,7 @@ inline order_node_t* queue_dequeue_head(book_side_t&   bside,
     }
     level.count     -= 1U;
     level.total_qty -= node.quantity;
-    node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
+    node.flags |= DEAD_FLAG;
     node.next_idx   = NULL_IDX;
 
     if (level.count == 0U) {
@@ -262,7 +262,7 @@ inline bool queue_remove(book_side_t&   bside,
         }
         level.count     -= 1U;
         level.total_qty -= node.quantity;
-        node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
+        node.flags |= DEAD_FLAG;
         node.next_idx   = NULL_IDX;
         if (level.count == 0U) {
             on_drain();
@@ -285,7 +285,7 @@ inline bool queue_remove(book_side_t&   bside,
             }
             level.count     -= 1U;
             level.total_qty -= node.quantity;
-            node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
+            node.flags |= DEAD_FLAG;
             node.next_idx   = NULL_IDX;
             if (level.count == 0U) {
                 on_drain();
