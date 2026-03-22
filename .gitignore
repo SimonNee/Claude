@@ -129,3 +129,13 @@ cpp/emini/cpp/test_book_run
 cpp/emini/data/orders.csv
 cpp/emini/data/orders_cancel_heavy.csv
 cpp/emini/data/orders_monotonic.csv
+cpp/eth/cpp/test_book_cpp
+cpp/eth/cpp/bench_book_cpp
+cpp/eth/data/events.csv
+cpp/eth/data/events_volatile.csv
+cpp/eth/data/events_trending.csv
+cpp/eth/cpp/test_book_cpp
+cpp/eth/cpp/bench_book_cpp
+cpp/eth/data/events.csv
+cpp/eth/data/events_volatile.csv
+cpp/eth/data/events_trending.csv
