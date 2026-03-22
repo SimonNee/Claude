@@ -432,14 +432,34 @@ directly comparable.
 
 ---
 
-## Current Best Numbers (Run 8 — data-driven, integer ticks, warm cache, core 2)
+## Run 10 — 2026-03-22 (C++ only — combined best_tick + hierarchical bitmap)
 
-| Benchmark | C | C++ |
-|---|---|---|
-| Add | 32 cy | 34 cy |
-| Cancel (realistic) | 38 cy | 22 cy |
-| Match (data-driven) | 162 cy | 135 cy |
-| best_bid (realistic) | 88 cy | 86 cy |
+Three benchmark workloads introduced: mixed (existing), cancel-heavy (30:1),
+monotonic (drifting OU price). All results stable across workloads.
+
+Three approaches benchmarked on `feature/emini-bestbid-*` branches:
+
+| Approach | best_bid | match | cancel | add |
+|---|---|---|---|---|
+| Baseline (flat scan) | 84 cy | 137 cy | 22 cy | 34 cy |
+| Hierarchical bitmap only | 26 cy | 26 cy | 22 cy | 36 cy |
+| Tracked field only | 20 cy | 28 cy | 24 cy | 36 cy |
+| **Combined (merged)** | **20 cy** | **24 cy** | **24 cy** | **38 cy** |
+
+Combined approach selected: best_tick field load (fast path) + two-level
+hierarchical bitmap fallback on level drain. Eliminates flat 138-word scan
+entirely. Best match latency across all three branches.
+
+---
+
+## Current Best Numbers (Run 10 — C++ combined, three workloads, core 2, isolcpus=2)
+
+| Benchmark | Mixed | Cancel-heavy | Monotonic |
+|---|---|---|---|
+| Add | 38 cy | 38 cy | 38 cy |
+| Cancel | 24 cy | 24 cy | 24 cy |
+| Match | 24 cy | 24 cy | 26 cy |
+| best_bid | 20 cy | 20 cy | 21 cy |
 
 ---
 
