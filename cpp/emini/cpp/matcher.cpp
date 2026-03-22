@@ -91,12 +91,17 @@ static fill_result_t match_core(Book::Impl& impl,
         // Drain the head of the best maker level
         price_level_t& level = maker_side.levels[best_tick];
 
+        // Evict any dead heads left by lazy cancels.
+        // count/total_qty/bitmap are already correct — no accounting update needed.
+        while (level.head_idx != NULL_IDX &&
+               (impl.arena.nodes[level.head_idx].flags & DEAD_FLAG)) {
+            queue_evict_dead_head(level, impl.arena);
+        }
+
         if (level.head_idx == NULL_IDX) {
-            // Level appears active in bitmap but has no orders — bitmap is stale.
-            // This must not happen (spec: bitmap updates are synchronous-only).
-            // Treat as empty and clear the bit defensively.
-            bitmap_clear(maker_side.bitmap, best_tick);
-            break;
+            // Level physically empty; bitmap already clear (settled at cancel time).
+            // Restart outer loop to re-scan bitmap for next active tick.
+            continue;
         }
 
         order_node_t& head = impl.arena.nodes[level.head_idx];

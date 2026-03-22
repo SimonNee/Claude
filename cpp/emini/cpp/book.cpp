@@ -165,11 +165,21 @@ bool Book::cancel(order_id_t order_id, side_t side, tick_t tick) noexcept {
         return false;
     }
 
-    book_side_t& sd = this->side(side);
+    // O(1) lazy mark
+    node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
 
-    // queue_remove performs O(1) head-cancel or O(q) mid-queue scan,
-    // sets DEAD_FLAG on the node, and clears the bitmap bit if level empties.
-    return queue_remove(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    book_side_t&   sd    = this->side(side);
+    price_level_t& level = sd.levels[tick];
+
+    level.count     -= 1U;
+    level.total_qty -= node.quantity;
+
+    // Synchronous bitmap clear when the last live order leaves
+    if (level.count == 0U) {
+        bitmap_clear(sd.bitmap, tick);
+    }
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -115,6 +115,22 @@ inline void queue_partial_fill_head(price_level_t& level,
     level.total_qty    -= fill_qty;
 }
 
+// Physically evict a single dead head node from the queue.
+// Precondition: level.head_idx != NULL_IDX
+//               arena.nodes[level.head_idx].flags & DEAD_FLAG
+// count/total_qty/bitmap are already correct (settled at cancel time).
+// This is pure linked-list maintenance — no accounting update needed.
+inline void queue_evict_dead_head(price_level_t& level,
+                                  arena_t&       arena) noexcept {
+    slot_idx_t    dead_slot = level.head_idx;
+    order_node_t& dead      = arena.nodes[dead_slot];
+    level.head_idx          = dead.next_idx;
+    if (level.head_idx == NULL_IDX) {
+        level.tail_idx = NULL_IDX;
+    }
+    dead.next_idx = NULL_IDX;
+}
+
 // Remove an arbitrary node from the FIFO by order_id.
 // O(q) predecessor scan for mid-queue cancel (spec: book_cancel implementation note).
 // Head-cancel special case is O(1).

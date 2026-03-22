@@ -171,13 +171,9 @@ static int check_invariants(const book_t *book) {
                 }
                 const order_node_t *node = &book->arena.nodes[curr];
 
-                /* Invariant 6: no DEAD_FLAG node in live chain */
-                if (node->flags & DEAD_FLAG) {
-                    fprintf(stderr, "INV6 FAIL: side=%u tick=%u node %u has DEAD_FLAG but is in chain\n", s, t, curr);
-                    return 0;
-                }
-
-                /* Invariant 4: monotonically increasing order_id along chain */
+                /* Invariant 4: monotonically increasing order_id along chain
+                 * (holds for dead and live nodes alike — lazy deletion leaves
+                 * dead nodes physically in the chain until the matcher evicts them) */
                 if (!first_node && node->order_id <= prev_id) {
                     fprintf(stderr, "INV4 FAIL: side=%u tick=%u order_id %u not > prev %u\n", s, t, node->order_id, prev_id);
                     return 0;
@@ -185,8 +181,13 @@ static int check_invariants(const book_t *book) {
                 prev_id    = node->order_id;
                 first_node = 0;
 
-                chain_count++;
-                chain_qty += node->quantity;
+                /* Count and sum live nodes only.
+                 * With lazy deletion, dead nodes remain in the chain until
+                 * the matcher evicts them; they must not affect count/total_qty. */
+                if (!(node->flags & DEAD_FLAG)) {
+                    chain_count++;
+                    chain_qty += node->quantity;
+                }
 
                 /* Advance — check for NULL sentinel at actual tail */
                 if (node->next_idx == NULL_IDX) {
@@ -214,27 +215,19 @@ static int check_invariants(const book_t *book) {
                 return 0;
             }
 
-            /* Invariant 9: if empty, both head and tail must be NULL_IDX */
-            if (level->count == 0) {
-                if (level->head_idx != NULL_IDX || level->tail_idx != NULL_IDX) {
-                    fprintf(stderr, "INV9 FAIL: side=%u tick=%u empty level has non-NULL head=%u tail=%u\n",
-                            s, t, level->head_idx, level->tail_idx);
-                    return 0;
-                }
-            } else {
-                /* Invariant 9: if non-empty, head must point to lowest-order_id live node */
-                const order_node_t *head_node = &book->arena.nodes[level->head_idx];
-                /* In FIFO with monotonically increasing IDs, head has the smallest ID */
-                uint32_t min_id = head_node->order_id;
-                /* Walk chain, verify head has the minimum ID */
-                uint32_t walk = level->head_idx;
-                while (walk != NULL_IDX) {
-                    if (book->arena.nodes[walk].order_id < min_id) {
-                        fprintf(stderr, "INV9 FAIL: side=%u tick=%u head is not min-order_id node\n", s, t);
-                        return 0;
-                    }
-                    walk = book->arena.nodes[walk].next_idx;
-                }
+            /* Invariant 9: head/tail structural consistency.
+             * With lazy deletion, count==0 does NOT require head==NULL_IDX —
+             * dead nodes may still occupy the physical chain after cancel.
+             * We only require that head and tail agree: both NULL or both non-NULL. */
+            if (level->head_idx == NULL_IDX && level->tail_idx != NULL_IDX) {
+                fprintf(stderr, "INV9 FAIL: side=%u tick=%u head is NULL but tail=%u\n",
+                        s, t, level->tail_idx);
+                return 0;
+            }
+            if (level->head_idx != NULL_IDX && level->tail_idx == NULL_IDX) {
+                fprintf(stderr, "INV9 FAIL: side=%u tick=%u head=%u but tail is NULL\n",
+                        s, t, level->head_idx);
+                return 0;
             }
         }
     }
@@ -508,15 +501,15 @@ TEST(B1_cancel_only_order) {
     assert(book_level_qty(b, BID, 100U)   == 0U);
     assert(!bitmap_is_set_pub(b, BID, 100U));
     assert(b->arena.nodes[0].flags & DEAD_FLAG);
-    /* head and tail must be NULL_IDX */
-    assert(b->sides[BID].levels[100U].head_idx == NULL_IDX);
-    assert(b->sides[BID].levels[100U].tail_idx == NULL_IDX);
+    /* With lazy deletion, the dead node remains physically in the chain.
+     * head_idx and tail_idx still point to the dead node; they are NOT NULL_IDX. */
+    assert(b->sides[BID].levels[100U].head_idx == 0U);
+    assert(b->sides[BID].levels[100U].tail_idx == 0U);
 
     book_destroy(b);
 }
 
-/* B2: Add two orders at same level, cancel head. Verify head is now second
- *     order; count=1; bitmap still set. */
+/* B2: Add two orders at same level, cancel head. Verify live count=1; bitmap set. */
 TEST(B2_cancel_head_of_two) {
     book_t *b = book_create(BASE_PRICE);
     assert(b != NULL);
@@ -535,9 +528,12 @@ TEST(B2_cancel_head_of_two) {
     assert(book_level_qty(b, BID, 100U)   == 7U);
     assert(bitmap_is_set_pub(b, BID, 100U));
 
-    /* The new head is id1 */
-    assert(b->sides[BID].levels[100U].head_idx == id1);
+    /* With lazy deletion, the dead id0 node stays physically at the head.
+     * head_idx still points to id0 (DEAD); tail_idx still points to id1 (live). */
+    assert(b->sides[BID].levels[100U].head_idx == id0);
     assert(b->sides[BID].levels[100U].tail_idx == id1);
+    assert(b->arena.nodes[id0].flags & DEAD_FLAG);
+    assert(!(b->arena.nodes[id1].flags & DEAD_FLAG));
 
     book_destroy(b);
 }
@@ -562,9 +558,12 @@ TEST(B3_cancel_tail_of_two) {
     assert(book_level_qty(b, BID, 100U)   == 5U);
     assert(bitmap_is_set_pub(b, BID, 100U));
 
-    /* Head is still id0; tail is also id0 */
+    /* Head is still id0 (live). Tail is still id1 (DEAD) — lazy deletion
+     * leaves the dead tail node physically in the chain. */
     assert(b->sides[BID].levels[100U].head_idx == id0);
-    assert(b->sides[BID].levels[100U].tail_idx == id0);
+    assert(b->sides[BID].levels[100U].tail_idx == id1);
+    assert(!(b->arena.nodes[id0].flags & DEAD_FLAG));
+    assert(b->arena.nodes[id1].flags & DEAD_FLAG);
 
     book_destroy(b);
 }
@@ -591,16 +590,23 @@ TEST(B4_cancel_middle_of_five) {
     assert(book_level_count(b, BID, 100U) == 4U);
     assert(book_level_qty(b, BID, 100U)   == 12U);
 
-    /* FIFO chain must be: id0→id1→id3→id4 (id2 removed) */
+    /* With lazy deletion: physical chain is id0→id1→id2(DEAD)→id3→id4.
+     * id2 is still physically present but has DEAD_FLAG set. */
     const price_level_t *level = &b->sides[BID].levels[100U];
     assert(level->head_idx == ids[0]);
     uint32_t curr = level->head_idx;
-    uint32_t expected_order[] = { ids[0], ids[1], ids[3], ids[4] };
-    for (int j = 0; j < 4; j++) {
+    uint32_t expected_order[] = { ids[0], ids[1], ids[2], ids[3], ids[4] };
+    for (int j = 0; j < 5; j++) {
         assert(curr == expected_order[j]);
         curr = b->arena.nodes[curr].next_idx;
     }
     assert(curr == NULL_IDX);
+    /* id2 must have DEAD_FLAG; others must not */
+    assert(b->arena.nodes[ids[2]].flags & DEAD_FLAG);
+    assert(!(b->arena.nodes[ids[0]].flags & DEAD_FLAG));
+    assert(!(b->arena.nodes[ids[1]].flags & DEAD_FLAG));
+    assert(!(b->arena.nodes[ids[3]].flags & DEAD_FLAG));
+    assert(!(b->arena.nodes[ids[4]].flags & DEAD_FLAG));
 
     book_destroy(b);
 }
@@ -699,13 +705,15 @@ TEST(B8_cancel_all_at_level) {
         assert(check_invariants(b));
     }
 
-    /* Level fully empty */
+    /* Live count is 0, bitmap is clear, best_ask sees no live levels */
     assert(book_level_count(b, ASK, 100U) == 0U);
     assert(book_level_qty(b, ASK, 100U)   == 0U);
     assert(!bitmap_is_set_pub(b, ASK, 100U));
-    assert(b->sides[ASK].levels[100U].head_idx == NULL_IDX);
-    assert(b->sides[ASK].levels[100U].tail_idx == NULL_IDX);
     assert(book_best_ask(b) == NULL_IDX);  /* empty book */
+    /* With lazy deletion, the physical chain still holds the N dead nodes.
+     * head_idx and tail_idx are not NULL — they point to dead nodes. */
+    assert(b->sides[ASK].levels[100U].head_idx != NULL_IDX);
+    assert(b->sides[ASK].levels[100U].tail_idx != NULL_IDX);
 
     book_destroy(b);
 }
@@ -948,7 +956,11 @@ TEST(D1_add_cancel_add) {
 
     assert(book_level_count(b, BID, 100U) == 1U);
     assert(book_level_qty(b, BID, 100U)   == 7U);
-    assert(b->sides[BID].levels[100U].head_idx == id1);
+    /* With lazy deletion, physical head is id0 (DEAD); id1 is appended after it. */
+    assert(b->sides[BID].levels[100U].head_idx == id0);
+    assert(b->sides[BID].levels[100U].tail_idx == id1);
+    assert(b->arena.nodes[id0].flags & DEAD_FLAG);
+    assert(!(b->arena.nodes[id1].flags & DEAD_FLAG));
 
     book_destroy(b);
 }

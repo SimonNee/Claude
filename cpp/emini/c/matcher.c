@@ -165,7 +165,25 @@ void matcher_execute(book_t *book, side_t aggressor_side,
          */
         while (remaining > 0U &&
                out->fill_count < MAX_FILLS &&
-               !( level->head_idx == NULL_IDX )) {
+               level->head_idx != NULL_IDX) {
+
+            /* Skip dead heads left by O(1) lazy cancels.
+             * count/total_qty/bitmap are already correct from cancel time;
+             * only the physical linked-list pointers need surgery here. */
+            while (level->head_idx != NULL_IDX &&
+                   (nodes[level->head_idx].flags & DEAD_FLAG)) {
+                uint32_t dead        = level->head_idx;
+                level->head_idx      = nodes[dead].next_idx;
+                nodes[dead].next_idx = NULL_IDX;
+                if (level->head_idx == NULL_IDX)
+                    level->tail_idx = NULL_IDX;
+            }
+            /* If all remaining nodes at this level were dead, move to
+             * the next bitmap tick. bitmap is already clear (cleared at
+             * cancel time when count hit 0), so the outer bitmap scan
+             * will not visit this level again. */
+            if (level->head_idx == NULL_IDX)
+                break;
 
             order_node_t *maker = &nodes[level->head_idx];
             qty_t maker_qty     = maker->quantity;

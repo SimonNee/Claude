@@ -94,10 +94,17 @@ static inline void queue_enqueue(price_level_t *level, uint64_t *bitmap,
                                  tick_t tick, order_node_t *nodes,
                                  uint32_t slot, qty_t quantity)
 {
-    bool was_empty = queue_is_empty(level);
+    /* With lazy deletion, physical empty (head_idx == NULL_IDX) and logical
+     * empty (count == 0) are separate conditions:
+     *   - Physical: head_idx == NULL_IDX — no nodes at all in chain.
+     *   - Logical:  count == 0 — no live orders, but dead nodes may remain.
+     *
+     * head_idx update: physical empty → new node becomes head.
+     * bitmap update:   logical empty  → set bit when first live order arrives. */
+    bool logically_empty = (level->count == 0U);
 
-    if (was_empty) {
-        /* First order at this level */
+    if (level->head_idx == NULL_IDX) {
+        /* Physically empty: new node becomes both head and tail before tail update */
         level->head_idx = slot;
     } else {
         /* Chain new node onto the current tail */
@@ -107,8 +114,8 @@ static inline void queue_enqueue(price_level_t *level, uint64_t *bitmap,
     level->count      = level->count + 1U;
     level->total_qty  = level->total_qty + quantity;
 
-    /* Synchronous bitmap update */
-    if (was_empty) {
+    /* Synchronous bitmap set when the first live order arrives at this level */
+    if (logically_empty) {
         bitmap[tick >> 6U] |= (UINT64_C(1) << (tick & 63U));
     }
 }
@@ -123,6 +130,7 @@ static inline void queue_enqueue(price_level_t *level, uint64_t *bitmap,
  * Returns true if the node was found and removed.
  * Returns false if order_id is not found in this queue.
  */
+__attribute__((unused))
 static bool queue_remove(price_level_t *level, uint64_t *bitmap,
                          tick_t tick, order_node_t *nodes,
                          order_id_t order_id)
@@ -350,11 +358,21 @@ bool book_cancel(book_t *book, order_id_t order_id, side_t side, tick_t tick)
     if (node->order_id != order_id)
         return false;
 
+    /* O(1) lazy mark — no linked-list surgery */
+    node->flags = (uint8_t)(node->flags | DEAD_FLAG);
+
     book_side_t   *bside = &book->sides[side];
     price_level_t *level = &bside->levels[tick];
 
-    return queue_remove(level, bside->bitmap, tick,
-                        book->arena.nodes, order_id);
+    level->count     = level->count - 1U;
+    level->total_qty = level->total_qty - node->quantity;
+
+    /* Synchronous bitmap clear when the last live order leaves */
+    if (level->count == 0U) {
+        bside->bitmap[tick >> 6U] &= ~(UINT64_C(1) << (tick & 63U));
+    }
+
+    return true;
 }
 
 fill_result_t book_match(book_t *book, side_t aggressor_side, double price,
