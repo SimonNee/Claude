@@ -99,8 +99,12 @@ static fill_result_t match_core(Book::Impl& impl,
             break;
         }
 
-        order_node_t& head = impl.arena.nodes[level.head_idx];
-        qty_t maker_qty    = head.quantity;
+        // Capture maker slot index BEFORE queue_dequeue_head advances level.head_idx.
+        // The slot index IS the order_id by construction (TRIZ Trimming: order_id
+        // field was removed from order_node_t; the arena slot index is identical).
+        slot_idx_t    maker_slot = level.head_idx;
+        order_node_t& head       = impl.arena.nodes[maker_slot];
+        qty_t maker_qty          = head.quantity;
         qty_t fill_qty;
 
         if (maker_qty <= result.remaining_qty) {
@@ -108,9 +112,9 @@ static fill_result_t match_core(Book::Impl& impl,
             fill_qty = maker_qty;
             result.remaining_qty -= fill_qty;
 
-            // Record fill
+            // Record fill — maker_slot == former order_id by construction
             fill_t& f         = result.fills[result.fill_count++];
-            f.maker_order_id  = head.order_id;
+            f.maker_order_id  = maker_slot;
             f.taker_order_id  = taker_id;
             f.price_tick      = best_tick;
             f.filled_qty      = fill_qty;
@@ -123,9 +127,10 @@ static fill_result_t match_core(Book::Impl& impl,
             fill_qty = result.remaining_qty;
             result.remaining_qty = 0U;
 
-            // Record fill
+            // Record fill — maker_slot is unchanged (node stays at head with
+            // decremented quantity; same slot index, same logical order_id)
             fill_t& f         = result.fills[result.fill_count++];
-            f.maker_order_id  = head.order_id;
+            f.maker_order_id  = maker_slot;
             f.taker_order_id  = taker_id;
             f.price_tick      = best_tick;
             f.filled_qty      = fill_qty;

@@ -56,14 +56,18 @@ typedef uint8_t side_t;
 /*
  * order_node_t — one entry in the arena.
  *
- * Exactly 16 bytes. AoS layout. order_id == slot index by construction.
+ * Exactly 16 bytes. AoS layout. The slot index (== order_id by construction)
+ * is NOT stored in the node — it equals the node's position in arena.nodes[].
+ * TRIZ Trimming: order_id was redundant; the freed 4 bytes hold prev_idx,
+ * enabling O(1) doubly-linked cancel with no predecessor scan.
+ *
  * flags bit 0 == DEAD_FLAG when the order is cancelled or fully filled.
  * _pad[3] is explicit padding to reach 16 bytes; must be zero on alloc.
  */
 typedef struct {
-    uint32_t order_id;   /* offset  0 — equals slot index by construction */
+    uint32_t prev_idx;   /* offset  0 — prev in FIFO; NULL_IDX for head */
     uint32_t quantity;   /* offset  4 — remaining quantity */
-    uint32_t next_idx;   /* offset  8 — next in FIFO; NULL_IDX if tail */
+    uint32_t next_idx;   /* offset  8 — next in FIFO; NULL_IDX for tail */
     uint8_t  flags;      /* offset 12 — DEAD_FLAG when dead */
     uint8_t  _pad[3];    /* offset 13 — explicit pad to 16 bytes */
 } order_node_t;
@@ -214,8 +218,9 @@ order_id_t book_add(book_t *book, side_t side, double price, qty_t quantity);
  * This avoids any secondary lookup: the cancel path is exactly one arena
  * node dereference plus FIFO manipulation.
  *
- * For a singly-linked queue, mid-queue cancel is O(q) — a scan from head
- * to find the predecessor. Head cancel is O(1).
+ * Cancel is O(1): the caller supplies order_id (== slot index), which gives
+ * direct O(1) arena lookup. The doubly-linked FIFO allows O(1) splice-out
+ * with no predecessor scan.
  *
  * Returns true if the order was live and has been cancelled.
  * Returns false if the order was already dead or the parameters are invalid.

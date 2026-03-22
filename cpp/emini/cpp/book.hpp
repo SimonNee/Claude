@@ -51,13 +51,18 @@ enum class side_t : uint8_t { BID = 0, ASK = 1 };
 
 // ---------------------------------------------------------------------------
 // Struct: order_node_t  (spec: Data Model / order_node_t)
-// Layout: order_id(0) quantity(4) next_idx(8) flags(12) _pad[3](13)
+// Layout: prev_idx(0) quantity(4) next_idx(8) flags(12) _pad[3](13)
+//
+// TRIZ Trimming: order_id was removed because it always equalled the slot index
+// by construction. The freed 4 bytes accommodate prev_idx, enabling O(1) cancel
+// via doubly-linked FIFO splice (queue_splice_out in internal.hpp).
+// The slot index IS the order_id — callers store it as order_id_t by convention.
 // ---------------------------------------------------------------------------
 
 struct order_node_t {
-    uint32_t order_id;   // offset  0 — equals slot index by construction
+    uint32_t prev_idx;   // offset  0 — prev node in FIFO; NULL_IDX for head
     uint32_t quantity;   // offset  4 — remaining quantity
-    uint32_t next_idx;   // offset  8 — next node in FIFO, NULL_IDX if tail
+    uint32_t next_idx;   // offset  8 — next node in FIFO; NULL_IDX for tail
     uint8_t  flags;      // offset 12 — DEAD_FLAG when cancelled or fully filled
     uint8_t  _pad[3];    // offset 13 — explicit pad to 16 bytes
 };                       // total: 16 bytes
@@ -217,7 +222,7 @@ public:
     // when the tick was pre-converted by the CSV loader. Not part of the public API.
     [[nodiscard]] order_id_t add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept;
 
-    // Cancel a previously placed order.
+    // Cancel a previously placed order. O(1) doubly-linked splice.
     // Caller must supply side and tick (recorded when add() returned).
     // Returns true on success, false if order is already dead or arguments invalid.
     bool cancel(order_id_t order_id, side_t side, tick_t tick) noexcept;

@@ -177,12 +177,27 @@ static int check_invariants(const book_t *book) {
                     return 0;
                 }
 
-                /* Invariant 4: monotonically increasing order_id along chain */
-                if (!first_node && node->order_id <= prev_id) {
-                    fprintf(stderr, "INV4 FAIL: side=%u tick=%u order_id %u not > prev %u\n", s, t, node->order_id, prev_id);
+                /* Invariant 4: monotonically increasing slot index along chain.
+                 * slot index == order_id by construction (monotonic arena). */
+                if (!first_node && curr <= prev_id) {
+                    fprintf(stderr, "INV4 FAIL: side=%u tick=%u slot %u not > prev %u\n", s, t, curr, prev_id);
                     return 0;
                 }
-                prev_id    = node->order_id;
+                /* Doubly-linked: head node must have prev_idx == NULL_IDX */
+                if (first_node && node->prev_idx != NULL_IDX) {
+                    fprintf(stderr, "INV_DL FAIL: side=%u tick=%u head node %u has prev_idx=%u (not NULL)\n",
+                            s, t, curr, node->prev_idx);
+                    return 0;
+                }
+                /* Doubly-linked consistency: next.prev == curr */
+                if (node->next_idx != NULL_IDX &&
+                    book->arena.nodes[node->next_idx].prev_idx != curr) {
+                    fprintf(stderr, "INV_DL FAIL: side=%u tick=%u node %u: next=%u but next.prev=%u\n",
+                            s, t, curr, node->next_idx,
+                            book->arena.nodes[node->next_idx].prev_idx);
+                    return 0;
+                }
+                prev_id    = curr;
                 first_node = 0;
 
                 chain_count++;
@@ -222,15 +237,14 @@ static int check_invariants(const book_t *book) {
                     return 0;
                 }
             } else {
-                /* Invariant 9: if non-empty, head must point to lowest-order_id live node */
-                const order_node_t *head_node = &book->arena.nodes[level->head_idx];
-                /* In FIFO with monotonically increasing IDs, head has the smallest ID */
-                uint32_t min_id = head_node->order_id;
-                /* Walk chain, verify head has the minimum ID */
-                uint32_t walk = level->head_idx;
+                /* Invariant 9: if non-empty, head must point to the lowest-slot live node.
+                 * slot index == order_id by construction (monotonic arena).
+                 * The smallest slot in the chain must be at the head. */
+                uint32_t min_slot = level->head_idx;
+                uint32_t walk     = level->head_idx;
                 while (walk != NULL_IDX) {
-                    if (book->arena.nodes[walk].order_id < min_id) {
-                        fprintf(stderr, "INV9 FAIL: side=%u tick=%u head is not min-order_id node\n", s, t);
+                    if (walk < min_slot) {
+                        fprintf(stderr, "INV9 FAIL: side=%u tick=%u head is not min-slot node\n", s, t);
                         return 0;
                     }
                     walk = book->arena.nodes[walk].next_idx;
@@ -538,6 +552,8 @@ TEST(B2_cancel_head_of_two) {
     /* The new head is id1 */
     assert(b->sides[BID].levels[100U].head_idx == id1);
     assert(b->sides[BID].levels[100U].tail_idx == id1);
+    /* Doubly-linked: new head must have no predecessor */
+    assert(b->arena.nodes[id1].prev_idx == NULL_IDX);
 
     book_destroy(b);
 }
@@ -601,6 +617,8 @@ TEST(B4_cancel_middle_of_five) {
         curr = b->arena.nodes[curr].next_idx;
     }
     assert(curr == NULL_IDX);
+    /* Doubly-linked: after splicing out ids[2], ids[3].prev must be ids[1] */
+    assert(b->arena.nodes[ids[3]].prev_idx == ids[1]);
 
     book_destroy(b);
 }

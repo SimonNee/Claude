@@ -3,16 +3,20 @@
  *
  * Module decomposition (all internal — book.c is the assembly point):
  *   Module 1: Arena   — monotonic allocation, no free list
- *   Module 2: Queue   — per-level singly-linked FIFO (intrusive, index-based)
+ *   Module 2: Queue   — per-level doubly-linked FIFO (intrusive, index-based)
  *   Module 3: Bitmap  — uint64_t word array; TZCNT/LZCNT for best-level scan
  *   Module 5: Book    — public API, routing to the above modules
  *
  * Module 4 (Matcher) is in matcher.c / matcher.h.
  *
  * No-cast rule: the only float-to-integer cast is in price_to_tick() in
- * book.h. This file contains two (uint8_t) casts for DEAD_FLAG assignment
+ * book.h. This file contains one (uint8_t) cast for DEAD_FLAG assignment
  * — a structural necessity under -Wconversion when assigning the result of
- * uint8_t | uint32_t back to uint8_t. These are not type model errors.
+ * uint8_t | uint32_t back to uint8_t. This is not a type model error.
+ *
+ * Order node slot index: since order_id == slot index by construction,
+ * and order_id is no longer stored in the node (TRIZ Trimming), callers
+ * recover the slot as (arena->next_slot - 1U) immediately after arena_alloc.
  */
 
 #include "book.h"
@@ -32,8 +36,12 @@
  * Returns a pointer to the freshly initialised node, or NULL if the arena
  * is exhausted (next_slot >= MAX_ORDERS).
  *
- * The node's order_id is set to the slot index. Invariant:
- *   arena.nodes[i].order_id == i   for every allocated node.
+ * The slot index equals (arena->next_slot - 1U) after this call returns.
+ * order_id is no longer stored in the node — the caller recovers the slot
+ * from arena->next_slot - 1U immediately after a successful alloc.
+ *
+ * prev_idx is initialised to NULL_IDX (node is initially isolated).
+ * queue_enqueue will set the correct prev_idx before linking.
  */
 static inline order_node_t *arena_alloc(arena_t *arena, qty_t quantity)
 {
@@ -44,7 +52,7 @@ static inline order_node_t *arena_alloc(arena_t *arena, qty_t quantity)
     arena->next_slot     = slot + 1U;
 
     order_node_t *node   = &arena->nodes[slot];
-    node->order_id  = slot;
+    node->prev_idx  = NULL_IDX;
     node->quantity  = quantity;
     node->next_idx  = NULL_IDX;
     node->flags     = 0U;
@@ -65,10 +73,16 @@ static inline order_node_t *arena_get(arena_t *arena, order_id_t order_id)
 }
 
 /* =========================================================================
- * Module 2: Level Queue (intrusive singly-linked FIFO, index-based)
+ * Module 2: Level Queue (intrusive doubly-linked FIFO, index-based)
  *
  * The arena node array is passed explicitly so that queue operations can
- * walk and modify next_idx fields without holding a global pointer.
+ * walk and modify prev_idx/next_idx fields without holding a global pointer.
+ *
+ * Doubly-linked invariants maintained by queue_enqueue and queue_splice_out:
+ *   - head node has prev_idx == NULL_IDX
+ *   - tail node has next_idx == NULL_IDX
+ *   - for any non-head node n: nodes[nodes[n].prev_idx].next_idx == n
+ *   - for any non-tail node n: nodes[nodes[n].next_idx].prev_idx == n
  * ====================================================================== */
 
 /*
@@ -82,11 +96,12 @@ static inline bool queue_is_empty(const price_level_t *level)
 /*
  * queue_enqueue — append a node (identified by slot index) to the FIFO tail.
  *
- * The node's next_idx must already be NULL_IDX (set by arena_alloc).
+ * Sets prev_idx on the new node to the old tail (or NULL_IDX if level was
+ * empty). Updates the old tail's next_idx to point to the new node.
  * If the level was previously empty, sets the bitmap bit synchronously.
  *
  * Caller: book_add. Preconditions (all guaranteed by book_add):
- *   - nodes[slot].next_idx == NULL_IDX
+ *   - nodes[slot].next_idx == NULL_IDX  (set by arena_alloc)
  *   - slot < MAX_ORDERS
  *   - tick < MAX_TICKS
  */
@@ -95,6 +110,9 @@ static inline void queue_enqueue(price_level_t *level, uint64_t *bitmap,
                                  uint32_t slot, qty_t quantity)
 {
     bool was_empty = queue_is_empty(level);
+
+    /* Set prev_idx before updating tail_idx: old tail is still in tail_idx */
+    nodes[slot].prev_idx = was_empty ? NULL_IDX : level->tail_idx;
 
     if (was_empty) {
         /* First order at this level */
@@ -114,73 +132,50 @@ static inline void queue_enqueue(price_level_t *level, uint64_t *bitmap,
 }
 
 /*
- * queue_remove — remove an arbitrary node from the FIFO by order_id.
+ * queue_splice_out — O(1) removal of an arbitrary node from the doubly-linked FIFO.
  *
- * Performs a predecessor scan from head (O(q)). Head removal is O(1).
- * Sets DEAD_FLAG on the removed node. Decrements count and total_qty.
- * If the level empties, clears the bitmap bit synchronously.
+ * Uses prev_idx/next_idx to splice the node out without scanning.
+ * Sets DEAD_FLAG on the removed node. Updates count, total_qty, and bitmap.
+ * Updates head_idx and/or tail_idx if the node was the head or tail.
+ * Zeroes prev_idx and next_idx on the removed node (node is now isolated).
  *
- * Returns true if the node was found and removed.
- * Returns false if order_id is not found in this queue.
+ * Preconditions (guaranteed by book_cancel before calling):
+ *   - order_id < arena->next_slot
+ *   - the node does NOT have DEAD_FLAG set
  */
-static bool queue_remove(price_level_t *level, uint64_t *bitmap,
-                         tick_t tick, order_node_t *nodes,
-                         order_id_t order_id)
+static inline void queue_splice_out(price_level_t *level, uint64_t *bitmap,
+                                    tick_t tick, order_node_t *nodes,
+                                    order_id_t order_id)
 {
-    if (queue_is_empty(level))
-        return false;
+    order_node_t *node = &nodes[order_id];
+    uint32_t prev      = node->prev_idx;
+    uint32_t next      = node->next_idx;
 
-    /* Fast path: head cancel O(1) */
-    if (level->head_idx == order_id) {
-        order_node_t *node  = &nodes[order_id];
-        level->head_idx     = node->next_idx;
-        if (level->head_idx == NULL_IDX)
-            level->tail_idx = NULL_IDX;
-
-        level->count        = level->count - 1U;
-        level->total_qty    = level->total_qty - node->quantity;
-        node->flags         = (uint8_t)(node->flags | DEAD_FLAG);
-        node->next_idx      = NULL_IDX;
-
-        if (level->head_idx == NULL_IDX) {
-            bitmap[tick >> 6U] &= ~(UINT64_C(1) << (tick & 63U));
-        }
-        return true;
+    /* Splice: update predecessor's next */
+    if (prev != NULL_IDX) {
+        nodes[prev].next_idx = next;
+    } else {
+        /* Node was the head */
+        level->head_idx = next;
     }
 
-    /* Mid-queue scan: walk from head, find predecessor of order_id */
-    uint32_t prev = level->head_idx;
-    uint32_t curr = nodes[prev].next_idx;
-
-    while (curr != NULL_IDX) {
-        if (curr == order_id) {
-            order_node_t *node      = &nodes[curr];
-            nodes[prev].next_idx    = node->next_idx;
-
-            /* Update tail if we removed the tail node */
-            if (curr == level->tail_idx) {
-                level->tail_idx = prev;
-            }
-
-            level->count        = level->count - 1U;
-            level->total_qty    = level->total_qty - node->quantity;
-            node->flags         = (uint8_t)(node->flags | DEAD_FLAG);
-            node->next_idx      = NULL_IDX;
-
-            /* Level cannot become empty from a mid-queue remove
-             * (there is at least the head node remaining), so no
-             * bitmap update is needed here. The level is empty only
-             * when count reaches 0, which happens only via head removal
-             * once prev == head_idx and next is NULL_IDX. Confirmed:
-             * mid-queue means prev >= head, curr is not head, so at
-             * minimum head is still live. No bitmap clear needed. */
-            return true;
-        }
-        prev = curr;
-        curr = nodes[curr].next_idx;
+    /* Splice: update successor's prev */
+    if (next != NULL_IDX) {
+        nodes[next].prev_idx = prev;
+    } else {
+        /* Node was the tail */
+        level->tail_idx = prev;
     }
 
-    return false; /* order_id not found in this queue */
+    level->count     = level->count - 1U;
+    level->total_qty = level->total_qty - node->quantity;
+    node->flags      = (uint8_t)(node->flags | DEAD_FLAG);
+    node->next_idx   = NULL_IDX;
+    node->prev_idx   = NULL_IDX;
+
+    if (level->count == 0U) {
+        bitmap[tick >> 6U] &= ~(UINT64_C(1) << (tick & 63U));
+    }
 }
 
 /* =========================================================================
@@ -263,21 +258,19 @@ order_id_t book_add(book_t *book, side_t side, double price, qty_t quantity)
     if (node == NULL)
         return NULL_IDX;
 
-    uint32_t slot = node->order_id;
+    /* Slot index: arena_alloc incremented next_slot, so allocated slot is one below */
+    uint32_t slot = book->arena.next_slot - 1U;
 
     book_side_t   *bside = &book->sides[side];
     price_level_t *level = &bside->levels[tick];
 
     /*
      * queue_enqueue handles:
-     *   - linking node->next_idx into the current tail's next field
-     *     (when level is non-empty)
+     *   - setting prev_idx on the new node (old tail or NULL_IDX)
+     *   - linking old tail's next_idx to slot (when level is non-empty)
      *   - setting head_idx when the level was empty
      *   - updating tail_idx, count, total_qty
      *   - setting the bitmap bit if the level just became live
-     *
-     * The arena pointer is passed so queue_enqueue can write
-     * nodes[tail_idx].next_idx = slot when the level is non-empty.
      */
     queue_enqueue(level, bside->bitmap, tick, book->arena.nodes, slot, quantity);
 
@@ -299,7 +292,8 @@ order_id_t book_add_tick(book_t *book, side_t side, tick_t tick, qty_t quantity)
     if (node == NULL)
         return NULL_IDX;
 
-    uint32_t slot = node->order_id;
+    /* Slot index: arena_alloc incremented next_slot, so allocated slot is one below */
+    uint32_t slot = book->arena.next_slot - 1U;
 
     book_side_t   *bside = &book->sides[side];
     price_level_t *level = &bside->levels[tick];
@@ -342,19 +336,15 @@ bool book_cancel(book_t *book, order_id_t order_id, side_t side, tick_t tick)
 
     order_node_t *node = arena_get(&book->arena, order_id);
 
-    /* Order already dead — no double-cancel */
+    /* Order already dead — double-cancel guard */
     if (node->flags & DEAD_FLAG)
-        return false;
-
-    /* Corruption guard: slot self-reference must hold */
-    if (node->order_id != order_id)
         return false;
 
     book_side_t   *bside = &book->sides[side];
     price_level_t *level = &bside->levels[tick];
 
-    return queue_remove(level, bside->bitmap, tick,
-                        book->arena.nodes, order_id);
+    queue_splice_out(level, bside->bitmap, tick, book->arena.nodes, order_id);
+    return true;
 }
 
 fill_result_t book_match(book_t *book, side_t aggressor_side, double price,

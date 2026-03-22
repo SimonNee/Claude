@@ -71,14 +71,19 @@ static inline uint32_t level_dequeue_head_full(price_level_t *level,
     order_node_t *node = &nodes[head];
 
     level->head_idx    = node->next_idx;
-    if (level->head_idx == NULL_IDX)
+    if (level->head_idx == NULL_IDX) {
         level->tail_idx = NULL_IDX;
+    } else {
+        /* New head has no predecessor */
+        nodes[level->head_idx].prev_idx = NULL_IDX;
+    }
 
     level->count       = level->count - 1U;
     level->total_qty   = level->total_qty - fill_qty;
 
     node->flags        = (uint8_t)(node->flags | DEAD_FLAG);
     node->next_idx     = NULL_IDX;
+    node->prev_idx     = NULL_IDX;
 
     /* Synchronous bitmap clear if the level emptied */
     if (level->head_idx == NULL_IDX) {
@@ -167,9 +172,10 @@ void matcher_execute(book_t *book, side_t aggressor_side,
                out->fill_count < MAX_FILLS &&
                !( level->head_idx == NULL_IDX )) {
 
-            order_node_t *maker = &nodes[level->head_idx];
+            /* Read maker_id from head_idx BEFORE dequeue advances it */
+            uint32_t maker_id   = level->head_idx;
+            order_node_t *maker = &nodes[maker_id];
             qty_t maker_qty     = maker->quantity;
-            uint32_t maker_id   = maker->order_id;
 
             qty_t fill_qty;
             if (maker_qty <= remaining) {

@@ -39,13 +39,15 @@ inline bool bitmap_is_set(const uint64_t* bitmap, tick_t tick) noexcept {
 // ---------------------------------------------------------------------------
 
 // Allocate a new node for an order. Returns NULL_IDX if arena is full.
+// prev_idx is initialised to NULL_IDX; queue_enqueue sets it correctly
+// when the node is placed at the tail of a non-empty level.
 inline slot_idx_t arena_alloc(arena_t& arena, qty_t quantity) noexcept {
     if (arena.next_slot >= MAX_ORDERS) {
         return NULL_IDX;
     }
     slot_idx_t    slot = arena.next_slot++;
     order_node_t& node = arena.nodes[slot];
-    node.order_id      = slot;
+    node.prev_idx      = NULL_IDX;
     node.quantity      = quantity;
     node.next_idx      = NULL_IDX;
     node.flags         = 0U;
@@ -61,16 +63,23 @@ inline slot_idx_t arena_alloc(arena_t& arena, qty_t quantity) noexcept {
 
 // Enqueue a newly allocated node at the FIFO tail.
 // Precondition: slot was just returned by arena_alloc; node fields are set.
+// Sets node.prev_idx to maintain doubly-linked FIFO invariants:
+//   - head node has prev_idx == NULL_IDX
+//   - each non-head node's prev_idx == the preceding slot index
 inline void queue_enqueue(price_level_t& level,
                           arena_t&       arena,
                           slot_idx_t     slot) noexcept {
     order_node_t& node = arena.nodes[slot];
     if (level.head_idx == NULL_IDX) {
+        // First node at this level — prev_idx already NULL_IDX from arena_alloc
+        node.prev_idx  = NULL_IDX;
         level.head_idx = slot;
         level.tail_idx = slot;
     } else {
+        // Append at tail; record old tail as predecessor
+        node.prev_idx                        = level.tail_idx;
         arena.nodes[level.tail_idx].next_idx = slot;
-        level.tail_idx = slot;
+        level.tail_idx                       = slot;
     }
     level.count     += 1U;
     level.total_qty += node.quantity;
@@ -79,6 +88,7 @@ inline void queue_enqueue(price_level_t& level,
 // Dequeue the head node. Marks it DEAD. Clears bitmap bit if level empties.
 // Returns pointer to the dequeued node (remains in arena, marked DEAD).
 // Returns nullptr if level is empty.
+// Maintains doubly-linked invariants: new head's prev_idx is set to NULL_IDX.
 inline order_node_t* queue_dequeue_head(price_level_t& level,
                                         arena_t&       arena,
                                         uint64_t*      bitmap,
@@ -89,14 +99,19 @@ inline order_node_t* queue_dequeue_head(price_level_t& level,
     slot_idx_t    slot = level.head_idx;
     order_node_t& node = arena.nodes[slot];
 
-    level.head_idx   = node.next_idx;
+    level.head_idx = node.next_idx;
     if (level.head_idx == NULL_IDX) {
         level.tail_idx = NULL_IDX;
+    } else {
+        // New head has no predecessor
+        arena.nodes[level.head_idx].prev_idx = NULL_IDX;
     }
+
     level.count    -= 1U;
     level.total_qty -= node.quantity;
     node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
-    node.next_idx   = NULL_IDX;
+    node.next_idx  = NULL_IDX;
+    node.prev_idx  = NULL_IDX;
 
     // Synchronous bitmap update (spec mandates synchronous-only updates)
     if (level.count == 0U) {
@@ -115,59 +130,48 @@ inline void queue_partial_fill_head(price_level_t& level,
     level.total_qty    -= fill_qty;
 }
 
-// Remove an arbitrary node from the FIFO by order_id.
-// O(q) predecessor scan for mid-queue cancel (spec: book_cancel implementation note).
-// Head-cancel special case is O(1).
-// Returns true on success; false if the node is not found in this queue.
-inline bool queue_remove(price_level_t& level,
-                         arena_t&       arena,
-                         uint64_t*      bitmap,
-                         tick_t         tick,
-                         order_id_t     order_id) noexcept {
-    if (level.head_idx == NULL_IDX) {
-        return false;
+// Splice an arbitrary node out of the doubly-linked FIFO in O(1).
+// Sets DEAD_FLAG on the node. Updates count, total_qty, head_idx, tail_idx,
+// and clears the bitmap bit if the level empties.
+//
+// Preconditions (verified by Book::cancel before this call):
+//   - order_id < arena.next_slot
+//   - (arena.nodes[order_id].flags & DEAD_FLAG) == 0
+//
+// The doubly-linked structure (prev_idx / next_idx) makes this O(1):
+// no predecessor scan is needed — we read prev_idx directly from the node.
+inline void queue_splice_out(price_level_t& level,
+                             arena_t&       arena,
+                             uint64_t*      bitmap,
+                             tick_t         tick,
+                             order_id_t     order_id) noexcept {
+    order_node_t& node = arena.nodes[order_id];
+    slot_idx_t    prev = node.prev_idx;
+    slot_idx_t    next = node.next_idx;
+
+    // Splice: update predecessor's next pointer (or move head forward)
+    if (prev != NULL_IDX) {
+        arena.nodes[prev].next_idx = next;
+    } else {
+        level.head_idx = next;
     }
 
-    // O(1) head-cancel special case (spec: book_cancel special case)
-    if (level.head_idx == order_id) {
-        order_node_t& node = arena.nodes[order_id];
-        level.head_idx     = node.next_idx;
-        if (level.head_idx == NULL_IDX) {
-            level.tail_idx = NULL_IDX;
-        }
-        level.count    -= 1U;
-        level.total_qty -= node.quantity;
-        node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
-        node.next_idx   = NULL_IDX;
-        if (level.count == 0U) {
-            bitmap_clear(bitmap, tick);
-        }
-        return true;
+    // Splice: update successor's prev pointer (or move tail backward)
+    if (next != NULL_IDX) {
+        arena.nodes[next].prev_idx = prev;
+    } else {
+        level.tail_idx = prev;
     }
 
-    // General case: O(q) predecessor scan
-    slot_idx_t prev_slot = level.head_idx;
-    while (true) {
-        order_node_t& prev = arena.nodes[prev_slot];
-        if (prev.next_idx == NULL_IDX) {
-            return false;  // order_id not in this queue
-        }
-        if (prev.next_idx == order_id) {
-            order_node_t& node = arena.nodes[order_id];
-            prev.next_idx      = node.next_idx;
-            if (node.next_idx == NULL_IDX) {
-                level.tail_idx = prev_slot;
-            }
-            level.count    -= 1U;
-            level.total_qty -= node.quantity;
-            node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
-            node.next_idx   = NULL_IDX;
-            if (level.count == 0U) {
-                bitmap_clear(bitmap, tick);
-            }
-            return true;
-        }
-        prev_slot = prev.next_idx;
+    level.count    -= 1U;
+    level.total_qty -= node.quantity;
+    node.flags = static_cast<uint8_t>(node.flags | DEAD_FLAG);
+    node.next_idx  = NULL_IDX;
+    node.prev_idx  = NULL_IDX;
+
+    // Synchronous bitmap update (spec mandates synchronous-only updates)
+    if (level.count == 0U) {
+        bitmap_clear(bitmap, tick);
     }
 }
 

@@ -167,9 +167,10 @@ bool Book::cancel(order_id_t order_id, side_t side, tick_t tick) noexcept {
 
     book_side_t& sd = this->side(side);
 
-    // queue_remove performs O(1) head-cancel or O(q) mid-queue scan,
-    // sets DEAD_FLAG on the node, and clears the bitmap bit if level empties.
-    return queue_remove(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    // O(1) doubly-linked splice: reads prev_idx/next_idx directly from the node,
+    // no predecessor scan. Sets DEAD_FLAG and clears bitmap bit if level empties.
+    queue_splice_out(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

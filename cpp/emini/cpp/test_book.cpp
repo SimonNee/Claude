@@ -150,13 +150,32 @@ static bool check_invariants(const Book& book) {
                     return false;
                 }
 
-                // Invariant 4: monotonically increasing order_id
-                if (!first && node.order_id <= prev_id) {
-                    std::fprintf(stderr, "INV4 FAIL: side=%u tick=%u id %u not > prev %u\n", s, t, node.order_id, prev_id);
+                // Invariant 4: monotonically increasing slot index (FIFO order).
+                // Slots are allocated monotonically; enqueue always appends at tail,
+                // so slot indices must be strictly ascending along the chain.
+                // Uses curr (slot index) directly — order_id field no longer exists;
+                // the slot index IS the order_id by construction (TRIZ Trimming).
+                if (!first && curr <= prev_id) {
+                    std::fprintf(stderr, "INV4 FAIL: side=%u tick=%u slot %u not > prev %u\n", s, t, curr, prev_id);
                     return false;
                 }
-                prev_id = node.order_id;
+                prev_id = curr;
                 first   = 0;
+
+                // Doubly-linked invariant DL1: head node must have no predecessor
+                if (curr == level.head_idx && node.prev_idx != NULL_IDX) {
+                    std::fprintf(stderr, "INV_DL1 FAIL: side=%u tick=%u head %u has prev=%u\n",
+                                 s, t, curr, node.prev_idx);
+                    return false;
+                }
+
+                // Doubly-linked invariant DL2: next.prev must point back to curr
+                if (node.next_idx != NULL_IDX &&
+                    impl.arena.nodes[node.next_idx].prev_idx != curr) {
+                    std::fprintf(stderr, "INV_DL2 FAIL: side=%u tick=%u node %u: next=%u next.prev=%u\n",
+                                 s, t, curr, node.next_idx, impl.arena.nodes[node.next_idx].prev_idx);
+                    return false;
+                }
 
                 ++chain_count;
                 chain_qty += node.quantity;
@@ -453,6 +472,8 @@ TEST(B2_cancel_head_of_two) {
     assert(impl.sides[0].levels[100U].head_idx == id1);
     assert(impl.sides[0].levels[100U].tail_idx == id1);
     assert(bitmap_is_set(impl.sides[0].bitmap, 100U));
+    // Doubly-linked: new head has no predecessor
+    assert(impl.arena.nodes[id1].prev_idx == NULL_IDX);
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +530,8 @@ TEST(B4_cancel_middle_of_five) {
         curr = impl.arena.nodes[curr].next_idx;
     }
     assert(curr == NULL_IDX);
+    // Doubly-linked: after splicing out ids[2], ids[3].prev must be ids[1]
+    assert(impl.arena.nodes[ids[3]].prev_idx == ids[1]);
 }
 
 // ---------------------------------------------------------------------------
