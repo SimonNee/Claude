@@ -97,8 +97,11 @@ Book::Book(Book&& other) noexcept : impl_(other.impl_) {
 // Not a member function — internal linkage within this TU.
 // ---------------------------------------------------------------------------
 
+// IsBid = true  → BID side: best bid = highest tick
+// IsBid = false → ASK side: best ask = lowest tick
+// Side is resolved at the API boundary; no runtime branch inside the hot path.
+template<bool IsBid>
 static order_id_t book_add_impl(Book::Impl& impl,
-                                side_t      side,
                                 tick_t      tick,
                                 qty_t       quantity) noexcept {
     slot_idx_t slot = arena_alloc(impl.arena, quantity);
@@ -106,7 +109,8 @@ static order_id_t book_add_impl(Book::Impl& impl,
         return NULL_IDX;
     }
 
-    book_side_t&   sd    = impl.sides[static_cast<uint8_t>(side)];
+    constexpr uint8_t side_idx = IsBid ? 0U : 1U;
+    book_side_t&   sd    = impl.sides[side_idx];
     price_level_t& level = sd.levels[tick];
 
     // level_set maintains both bitmap[] and summary[] when a level
@@ -119,12 +123,8 @@ static order_id_t book_add_impl(Book::Impl& impl,
     queue_enqueue(level, impl.arena, slot);
 
     // ADD PATH: update best_tick — no scan.
-    //
-    // BID side (side_index 0): best bid = highest tick.
-    //   If side was empty or the new tick is higher, update.
-    // ASK side (side_index 1): best ask = lowest tick.
-    //   If side was empty or the new tick is lower, update.
-    if (side == side_t::BID) {
+    // IsBid selects direction at compile time; no runtime branch.
+    if (IsBid) {
         if (sd.best_tick == TICK_INVALID || tick > sd.best_tick) {
             sd.best_tick = tick;
         }
@@ -156,7 +156,11 @@ order_id_t Book::add(side_t side, double price, qty_t quantity) noexcept {
         return NULL_IDX;
     }
 
-    return book_add_impl(*impl_, side, tick, quantity);
+    if (side == side_t::BID) {
+        return book_add_impl<true>(*impl_, tick, quantity);
+    } else {
+        return book_add_impl<false>(*impl_, tick, quantity);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +179,11 @@ order_id_t Book::add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept 
         return NULL_IDX;
     }
 
-    return book_add_impl(*impl_, side, tick, quantity);
+    if (side == side_t::BID) {
+        return book_add_impl<true>(*impl_, tick, quantity);
+    } else {
+        return book_add_impl<false>(*impl_, tick, quantity);
+    }
 }
 
 // ---------------------------------------------------------------------------
