@@ -47,7 +47,9 @@ Book::Book(double base_price) {
             sd.levels[t].count     = 0U;
             sd.levels[t].total_qty = 0U;
         }
-        std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        // Zero the Level-1 bitmap and the Level-2 summary.
+        std::memset(sd.bitmap,  0, sizeof(sd.bitmap));
+        std::memset(sd.summary, 0, sizeof(sd.summary));
     }
 
     impl_->arena.next_slot = 0U;
@@ -100,9 +102,10 @@ order_id_t Book::add(side_t side, double price, qty_t quantity) noexcept {
 
     book_side_t& sd = this->side(side);
 
-    // Synchronous bitmap set on first order at this level (Module 3)
+    // Synchronous two-level bitmap set on first order at this level (Module 3).
+    // level_set updates both the Level-1 bitmap and the Level-2 summary.
     if (sd.levels[tick].count == 0U) {
-        bitmap_set(sd.bitmap, tick);
+        level_set(sd, tick);
     }
 
     // Enqueue at FIFO tail (Module 2)
@@ -135,7 +138,7 @@ order_id_t Book::add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept 
     book_side_t& sd = this->side(side);
 
     if (sd.levels[tick].count == 0U) {
-        bitmap_set(sd.bitmap, tick);
+        level_set(sd, tick);
     }
 
     queue_enqueue(sd.levels[tick], impl_->arena, slot);
@@ -168,8 +171,9 @@ bool Book::cancel(order_id_t order_id, side_t side, tick_t tick) noexcept {
     book_side_t& sd = this->side(side);
 
     // queue_remove performs O(1) head-cancel or O(q) mid-queue scan,
-    // sets DEAD_FLAG on the node, and clears the bitmap bit if level empties.
-    return queue_remove(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    // sets DEAD_FLAG on the node, and clears the bitmap bit (and summary bit
+    // via level_clear) if the level empties.
+    return queue_remove(sd.levels[tick], impl_->arena, sd, tick, order_id);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +231,11 @@ void Book::reset() noexcept {
             sd.levels[t].count     = 0U;
             sd.levels[t].total_qty = 0U;
         }
-        std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        // Zero both the Level-1 bitmap and the Level-2 summary.
+        // These are adjacent fields in book_side_t; memset each by its own sizeof
+        // to remain correct if the layout ever changes.
+        std::memset(sd.bitmap,   0, sizeof(sd.bitmap));
+        std::memset(sd.summary,  0, sizeof(sd.summary));
     }
     impl_->arena.next_slot = 0U;
     // base_price is retained across reset (spec)

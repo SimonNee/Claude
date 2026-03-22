@@ -104,16 +104,42 @@ struct fill_result_t {
 };
 
 // ---------------------------------------------------------------------------
+// Two-level hierarchical bitmap constants
+//
+// Level 1 (existing): bitmap[BITMAP_WORDS]  — one bit per tick, 8800 ticks
+//                     138 × 64-bit words
+//
+// Level 2 (summary):  summary[SUMMARY_WORDS] — one bit per Level-1 word
+//                     ceil(138 / 64) = 3 words (192 bits allocated, 138 used)
+//
+// Summary word 0: covers Level-1 words   0– 63  (64 words)
+// Summary word 1: covers Level-1 words  64–127  (64 words)
+// Summary word 2: covers Level-1 words 128–137  (10 words; bits 10–63 always zero)
+//
+// Invariant: bits 10–63 of summary[2] are ALWAYS zero.
+// This is maintained by level_set/level_clear: only word indices 0–137 are
+// ever set. Word 137 maps to summary word 2, bit 9 (137 - 2*64 = 9). The
+// upper 54 bits of summary[2] can never be set. No bounds check is therefore
+// required in bitmap_highest_h / bitmap_lowest_h — the arithmetic is safe.
+// ---------------------------------------------------------------------------
+
+static constexpr uint32_t SUMMARY_WORDS = (BITMAP_WORDS + 63U) / 64U;  // 3
+
+static_assert(SUMMARY_WORDS == 3U, "SUMMARY_WORDS must be 3 for 138 L1 words");
+
+// ---------------------------------------------------------------------------
 // Struct: book_side_t  (spec: Data Model / book_side_t)
 // levels[] before bitmap[] — larger/more-frequently-accessed at lower address
+// summary[] after bitmap[] — 3 additional 64-bit words for the hierarchical index
 // ---------------------------------------------------------------------------
 
 struct book_side_t {
-    price_level_t levels[MAX_TICKS];    // 8800 × 16 = 140,800 bytes
-    uint64_t      bitmap[BITMAP_WORDS]; //  138 ×  8 =   1,104 bytes
-};                                      // total: 141,904 bytes
+    price_level_t levels[MAX_TICKS];      // 8800 × 16 = 140,800 bytes
+    uint64_t      bitmap[BITMAP_WORDS];   //  138 ×  8 =   1,104 bytes
+    uint64_t      summary[SUMMARY_WORDS]; //    3 ×  8 =      24 bytes
+};                                        // total: 141,928 bytes
 
-static_assert(sizeof(book_side_t) == 141904U, "book_side_t layout changed");
+static_assert(sizeof(book_side_t) == 141928U, "book_side_t layout changed");
 
 // ---------------------------------------------------------------------------
 // Struct: arena_t  (spec: Data Model / arena_t)
@@ -161,6 +187,84 @@ inline int bitmap_highest(const uint64_t* bits) noexcept {
         }
     }
     return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Two-level hierarchical bitmap lookup — best ask (lowest set bit)
+//
+// Algorithm:
+//   1. Scan summary[0..2] for the first non-zero word (lowest summary word index sw).
+//   2. TZCNT the summary word → bit position within the summary word.
+//      That bit position is the Level-1 word index within this summary word's span.
+//      Level-1 word index: w = sw * 64 + tzcnt(summary[sw])
+//   3. TZCNT bitmap[w] → bit position within the Level-1 word.
+//   4. Tick = w * 64 + tzcnt(bitmap[w]).
+//
+// Complexity: always 3 loads (summary[0..2]) + at most 2 TZCNT + 1 load (bitmap[w]).
+// No loop — the compiler unrolls the 3-word summary scan to straight-line code.
+//
+// Safety: summary[2] bits 10–63 are always zero (see invariant above).
+//   tzcnt(summary[2]) <= 9 → w = 2*64 + 9 = 137 <= BITMAP_WORDS-1. Safe.
+// ---------------------------------------------------------------------------
+
+inline tick_t bitmap_lowest_h(const book_side_t& side) noexcept {
+    // Scan 3 summary words in ascending order (word 0 covers the lowest ticks).
+    for (uint32_t sw = 0U; sw < SUMMARY_WORDS; ++sw) {
+        if (side.summary[sw] == 0U) {
+            continue;
+        }
+        // sw is the index of the first non-zero summary word.
+        // Bit position within this summary word is the Level-1 word offset.
+        uint32_t bit_in_sw = static_cast<uint32_t>(__builtin_ctzll(side.summary[sw]));
+        uint32_t w         = sw * 64U + bit_in_sw;   // Level-1 word index
+
+        // w is guaranteed < BITMAP_WORDS because summary bits > 137 are always zero.
+        // TZCNT the Level-1 word to find the lowest set bit within it.
+        uint32_t bit_in_w  = static_cast<uint32_t>(__builtin_ctzll(side.bitmap[w]));
+        return w * 64U + bit_in_w;
+    }
+    // All summary words are zero — the side is empty.
+    return TICK_INVALID;
+}
+
+// ---------------------------------------------------------------------------
+// Two-level hierarchical bitmap lookup — best bid (highest set bit)
+//
+// Algorithm:
+//   1. Scan summary[2..0] in descending order for the last non-zero word.
+//   2. LZCNT the summary word → distance from the MSB to the highest set bit.
+//      Highest bit position within summary word: 63 - lzcnt(summary[sw])
+//      Level-1 word index: w = sw * 64 + (63 - lzcnt(summary[sw]))
+//   3. LZCNT bitmap[w] → distance from MSB to highest set bit.
+//   4. Tick = w * 64 + (63 - lzcnt(bitmap[w])).
+//
+// Complexity: always 3 loads (summary[2..0]) + at most 2 LZCNT + 1 load (bitmap[w]).
+// No loop — the compiler unrolls the 3-word summary scan to straight-line code.
+//
+// Safety: summary[2] bits 10–63 are always zero (see invariant above).
+//   63 - lzcnt(summary[2]) <= 9 → w = 2*64 + 9 = 137 <= BITMAP_WORDS-1. Safe.
+// ---------------------------------------------------------------------------
+
+inline tick_t bitmap_highest_h(const book_side_t& side) noexcept {
+    // Scan 3 summary words in descending order (word 2 covers the highest ticks).
+    // Loop variable must be signed to detect w >= 0 termination at sw == 0.
+    for (int sw = static_cast<int>(SUMMARY_WORDS) - 1; sw >= 0; --sw) {
+        uint32_t usw = static_cast<uint32_t>(sw);
+        if (side.summary[usw] == 0U) {
+            continue;
+        }
+        // sw is the index of the last non-zero summary word.
+        // Highest bit position within this summary word.
+        uint32_t bit_in_sw = 63U - static_cast<uint32_t>(__builtin_clzll(side.summary[usw]));
+        uint32_t w         = usw * 64U + bit_in_sw;  // Level-1 word index
+
+        // w is guaranteed < BITMAP_WORDS because summary bits > 137 are always zero.
+        // LZCNT the Level-1 word to find the highest set bit within it.
+        uint32_t bit_in_w  = 63U - static_cast<uint32_t>(__builtin_clzll(side.bitmap[w]));
+        return w * 64U + bit_in_w;
+    }
+    // All summary words are zero — the side is empty.
+    return TICK_INVALID;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,15 +340,17 @@ public:
                                               qty_t      quantity,
                                               order_id_t taker_id) noexcept;
 
-    // Best price queries — defined in class body for guaranteed inlining.
+    // Best price queries — defined in class body for guaranteed inlining (Idiom 6).
+    // Use the two-level hierarchical bitmap (Pitfall 8: LTO cold-call refusal avoided
+    // by defining here; the hierarchical functions above are also header-defined).
     [[nodiscard]] tick_t best_bid() const noexcept {
-        int idx = bitmap_highest<BITMAP_WORDS>(impl_->sides[0].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        // sides[0] is the BID side. bitmap_highest_h returns TICK_INVALID if empty.
+        return bitmap_highest_h(impl_->sides[0]);
     }
 
     [[nodiscard]] tick_t best_ask() const noexcept {
-        int idx = bitmap_lowest<BITMAP_WORDS>(impl_->sides[1].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        // sides[1] is the ASK side. bitmap_lowest_h returns TICK_INVALID if empty.
+        return bitmap_lowest_h(impl_->sides[1]);
     }
 
     // Level inspection (not on hot path)
