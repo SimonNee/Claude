@@ -58,22 +58,22 @@ static fill_result_t match_core(Book::Impl& impl,
     // Matching loop — iterate maker side from its best price toward aggressor price
     while (result.remaining_qty > 0U && result.fill_count < 64U) {
 
-        // Find the best price on the maker side
-        int best_raw;
+        // Find the best price on the maker side using the two-level hierarchical
+        // bitmap.  bitmap_lowest_h / bitmap_highest_h return TICK_INVALID when
+        // the side is empty.
+        tick_t best_tick;
         if (aggressor_side == side_t::BID) {
             // Aggressor is BID → maker is ASK → want lowest ask
-            best_raw = bitmap_lowest<BITMAP_WORDS>(maker_side.bitmap);
+            best_tick = bitmap_lowest_h(maker_side);
         } else {
             // Aggressor is ASK → maker is BID → want highest bid
-            best_raw = bitmap_highest<BITMAP_WORDS>(maker_side.bitmap);
+            best_tick = bitmap_highest_h(maker_side);
         }
 
         // Empty maker side
-        if (best_raw < 0) {
+        if (best_tick == TICK_INVALID) {
             break;
         }
-
-        tick_t best_tick = static_cast<tick_t>(best_raw);
 
         // Check crossing condition
         // BID aggressor: crosses if best_ask_tick <= aggressor_tick
@@ -94,8 +94,8 @@ static fill_result_t match_core(Book::Impl& impl,
         if (level.head_idx == NULL_IDX) {
             // Level appears active in bitmap but has no orders — bitmap is stale.
             // This must not happen (spec: bitmap updates are synchronous-only).
-            // Treat as empty and clear the bit defensively.
-            bitmap_clear(maker_side.bitmap, best_tick);
+            // Treat as empty and clear both levels defensively via level_clear.
+            level_clear(maker_side, best_tick);
             break;
         }
 
@@ -115,8 +115,9 @@ static fill_result_t match_core(Book::Impl& impl,
             f.price_tick      = best_tick;
             f.filled_qty      = fill_qty;
 
-            // Dequeue head and mark DEAD; clears bitmap bit if level empties
-            queue_dequeue_head(level, impl.arena, maker_side.bitmap, best_tick);
+            // Dequeue head and mark DEAD; clears bitmap bit (and summary bit
+            // via level_clear) if the level empties.
+            queue_dequeue_head(level, impl.arena, maker_side, best_tick);
 
         } else {
             // Partial fill of the maker order — maker stays at head
