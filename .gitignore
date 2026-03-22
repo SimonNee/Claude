@@ -123,6 +123,9 @@ cpp/emini/c/test_book
 cpp/emini/c/bench_book
 cpp/emini/cpp/test_book_cpp
 cpp/emini/cpp/bench_book_cpp
+cpp/emini/cpp/test_book_run
 
 # Emini orderbook — generated data (regenerate with: q cpp/emini/data/generate.q)
 cpp/emini/data/orders.csv
+cpp/emini/data/orders_cancel_heavy.csv
+cpp/emini/data/orders_monotonic.csv
