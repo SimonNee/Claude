@@ -356,8 +356,75 @@ Significantly higher than synthetic runs (22–24 cy) — the OU book has realis
 
 ---
 
+---
+
+## Run 5 — 2026-03-22 (both — O(1) cancel comparison, data-driven)
+
+Two branches benchmarked against the Run 4 OU event stream (1M events, 10:1 cancel ratio).
+
+### Branch A — `feature/emini-cancel-lazy` (lazy deletion)
+
+Cancel: set DEAD_FLAG + decrement count/total_qty + clear bitmap if empty. Node stays in list.
+Match: adds dead-head skip loop before each head access.
+
+| Benchmark | C median | C p99 | C++ median | C++ p99 |
+|---|---|---|---|---|
+| Add | 34 cy | 58 cy | 34 cy | 57 cy |
+| Cancel | 33 cy | 58 cy | 24 cy | 40 cy |
+| Match | 173 cy | 663 cy | 198 cy | 240 cy |
+| best_bid | 119 cy | 152 cy | 87 cy | 133 cy |
+
+### Branch B — `feature/emini-cancel-doubly` (doubly-linked + trim order_id)
+
+Cancel: O(1) splice via prev_idx/next_idx. `order_id` field trimmed; slot index serves as order_id.
+No match path changes.
+
+| Benchmark | C median | C p99 | C++ median | C++ p99 |
+|---|---|---|---|---|
+| Add | 34 cy | 56 cy | 36 cy | 60 cy |
+| Cancel | 34 cy | 55 cy | 22 cy | 36 cy |
+| Match | 170 cy | 502 cy | 159 cy | 206 cy |
+| best_bid | 119 cy | 164 cy | 86 cy | 93 cy |
+
+---
+
+### Run 5 — Analysis
+
+**vs Run 4 baseline (singly-linked O(q) cancel):**
+
+| Benchmark | Run 4 C | Lazy C | Doubly C | Run 4 C++ | Lazy C++ | Doubly C++ |
+|---|---|---|---|---|---|---|
+| Add | 43 cy | 34 cy | 34 cy | 34 cy | 34 cy | 36 cy |
+| Cancel | 39 cy | **33 cy** | **34 cy** | 22 cy | 24 cy | **22 cy** |
+| Match | 176 cy | 173 cy | 170 cy | 161 cy | 198 cy | **159 cy** |
+| best_bid | 119 cy | 119 cy | 119 cy | 87 cy | 87 cy | **86 cy** |
+
+**C cancel**: Both approaches improve on the 39 cy baseline — lazy 33 cy, doubly 34 cy. Within noise.
+
+**C++ cancel**: Doubly-linked matches the 22 cy baseline exactly. Lazy adds 2 cy — the dead-head skip in match has a small cost visible in the C++ match p99 (240 cy vs 206 cy doubly).
+
+**Match latency**: Doubly-linked wins clearly in C++ (159 cy vs 198 cy for lazy). The lazy dead-head skip adds overhead proportional to the cancel:match ratio — at 10:1, the matcher sees ~10 dead heads per match on average, each requiring a skip iteration. Doubly-linked avoids this entirely.
+
+**C++ p99 best_bid**: Doubly-linked 93 cy vs lazy 133 cy — likely noise or warm-up difference; both within expected range.
+
+**Verdict: doubly-linked (Branch B) is the stronger design for this workload.** The 10:1 cancel:match ratio makes lazy deletion's deferred cost visible in match latency. Doubly-linked keeps match clean.
+
+---
+
+## Current Best Numbers (Run 5 — doubly-linked O(1) cancel)
+
+| Benchmark | C | C++ |
+|---|---|---|
+| Add | 34 cy | 36 cy |
+| Cancel | 34 cy | 22 cy |
+| Match (data-driven) | 170 cy | 159 cy |
+| best_bid (realistic) | 119 cy | 86 cy |
+
+---
+
 ## Open Items
 
-- [ ] C doubly-linked promotion decision — **deferred to server hardware**. 53 cy at q=10 mid is 3 cy over the 50 cy threshold, within laptop noise. `isolcpus` insufficient on a mobile chip (thermal throttling, SMI, power states). Retest on deployment-class hardware (Xeon/EPYC) with IRQ affinity pinned away from the test core. Threshold and promote path unchanged — see architect-spec.md Decision Register.
-- [ ] Revisit C++ bitmap unroll if future benchmark shows N=1 worst case becoming load-bearing
-- [ ] Investigate C best_bid gap vs C++ (119 cy vs 87 cy) on realistic bitmap occupancy
+- [ ] Retest C cancel on server hardware (Xeon/EPYC, `isolcpus`, IRQ affinity) — doubly-linked branch now the primary target
+- [ ] Merge `feature/emini-cancel-doubly` to `feature/emini-orderbook` (user decision)
+- [ ] Revisit C++ bitmap unroll if N=1 worst case becomes load-bearing
+- [ ] Investigate C best_bid gap vs C++ (119 cy vs 86 cy) on realistic bitmap occupancy
