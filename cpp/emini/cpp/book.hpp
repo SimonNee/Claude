@@ -6,6 +6,14 @@
  *
  * One sanctioned cast in the entire system: float->uint32_t in price_to_tick().
  * All other arithmetic is integer-typed throughout.
+ *
+ * Combined best-bid/ask strategy:
+ *   Fast path  — book_side_t::best_tick   : single field load, no scan
+ *   Fallback   — book_side_t::summary[3]  : 2-level hierarchical bitmap
+ *                (2 TZCNT/LZCNT instead of up to 138-word flat scan)
+ *
+ * The flat 138-word scan (bitmap_lowest / bitmap_highest) is kept for the
+ * invariant checker but is NEVER called on the hot path.
  */
 
 #pragma once
@@ -29,6 +37,10 @@ namespace es::book {
 
 static constexpr uint32_t MAX_TICKS    = 8800U;
 static constexpr uint32_t BITMAP_WORDS = 138U;   // ceil(8800 / 64)
+// Number of summary words: ceil(BITMAP_WORDS / 64).
+// Each summary bit covers 64 flat-bitmap words.
+// 138 bitmap words → ceil(138/64) = 3 summary words.
+static constexpr uint32_t SUMMARY_WORDS = 3U;
 static constexpr uint32_t MAX_ORDERS   = 1'000'000U;
 static constexpr uint32_t NULL_IDX     = 0xFFFF'FFFFU;
 static constexpr uint8_t  DEAD_FLAG    = 0x01U;
@@ -36,6 +48,7 @@ static constexpr uint32_t TICK_INVALID = NULL_IDX;
 
 // Compile-time verification of bitmap word count.
 static_assert(BITMAP_WORDS == (MAX_TICKS + 63U) / 64U, "BITMAP_WORDS mismatch");
+static_assert(SUMMARY_WORDS == (BITMAP_WORDS + 63U) / 64U, "SUMMARY_WORDS mismatch");
 
 // ---------------------------------------------------------------------------
 // Primary type aliases (spec: Primary Types)
@@ -105,15 +118,35 @@ struct fill_result_t {
 
 // ---------------------------------------------------------------------------
 // Struct: book_side_t  (spec: Data Model / book_side_t)
-// levels[] before bitmap[] — larger/more-frequently-accessed at lower address
+//
+// Combined best-bid/ask data layout:
+//   levels[]    — price-level FIFO queues; 8800 × 16 = 140,800 bytes
+//   bitmap[]    — flat 138-word occupancy bitmap; 138 × 8 = 1,104 bytes
+//   best_tick   — cached best price for this side (TICK_INVALID if empty)
+//                 FAST PATH: single field load, no scan
+//   _pad         — 4 bytes explicit pad to align summary[] to 8 bytes
+//   summary[]   — 3-word second-level bitmap over bitmap[]
+//                 FALLBACK PATH: bit b set ↔ at least one of bitmap[b*64 .. b*64+63] is non-zero
+//
+// Field order is deliberate:
+//   levels[] at offset 0 — most frequently accessed, lowest address
+//   bitmap[] at offset 140800 — set/cleared on every add/cancel/fill
+//   best_tick at offset 141904 — hot query field, just past bitmap
+//   _pad at offset 141908 — keeps summary[] 8-byte aligned
+//   summary[] at offset 141912 — fallback only; rarely loaded
+//
+// Total: 141,936 bytes
 // ---------------------------------------------------------------------------
 
 struct book_side_t {
-    price_level_t levels[MAX_TICKS];    // 8800 × 16 = 140,800 bytes
-    uint64_t      bitmap[BITMAP_WORDS]; //  138 ×  8 =   1,104 bytes
-};                                      // total: 141,904 bytes
+    price_level_t levels[MAX_TICKS];      // offset      0 — 140,800 bytes
+    uint64_t      bitmap[BITMAP_WORDS];   // offset 140800 —   1,104 bytes
+    tick_t        best_tick;              // offset 141904 —       4 bytes (fast path)
+    uint32_t      _side_pad;              // offset 141908 —       4 bytes (align summary[])
+    uint64_t      summary[SUMMARY_WORDS]; // offset 141912 —      24 bytes (fallback path)
+};                                        // total:           141,936 bytes
 
-static_assert(sizeof(book_side_t) == 141904U, "book_side_t layout changed");
+static_assert(sizeof(book_side_t) == 141936U, "book_side_t layout changed");
 
 // ---------------------------------------------------------------------------
 // Struct: arena_t  (spec: Data Model / arena_t)
@@ -124,19 +157,17 @@ struct arena_t {
     uint32_t     next_slot;          // allocation high-water mark
 };
 
-// The spec notes: sizeof(arena_t) depends on alignment of next_slot after the array.
-// nodes is uint32_t-aligned (4 bytes). next_slot is uint32_t — no additional pad needed.
-// Expected: 16,000,000 + 4 = 16,000,004 bytes.
 static_assert(sizeof(arena_t) == 16'000'004U, "arena_t layout changed");
 
 // ---------------------------------------------------------------------------
-// Internal bitmap helpers  (Idiom 4 — defined here for class-body inlining)
+// Flat bitmap helpers (Idiom 4 — kept for the invariant checker, NOT hot path)
+//
+// These perform the original 138-word linear scan.  The hot path now uses
+// book_side_t::best_tick (fast path) or the hierarchical helpers below
+// (fallback path).  These flat helpers remain correct and are used only by
+// the test suite's invariant checker.
 // ---------------------------------------------------------------------------
 
-// Returns the lowest set bit index, or -1 if all zero.
-// Template on NWORDS so the loop bound is a compile-time constant.
-// Loop variable is int to avoid uint32_t->int narrowing in the return expression.
-// NWORDS fits in int (138 << INT_MAX), so the cast is always safe.
 template<uint32_t NWORDS>
 inline int bitmap_lowest(const uint64_t* bits) noexcept {
     static_assert(NWORDS <= 0x7FFF'FFFFU, "NWORDS exceeds int range");
@@ -149,8 +180,6 @@ inline int bitmap_lowest(const uint64_t* bits) noexcept {
     return -1;
 }
 
-// Returns the highest set bit index, or -1 if all zero.
-// Same int-loop pattern to prevent narrowing warnings.
 template<uint32_t NWORDS>
 inline int bitmap_highest(const uint64_t* bits) noexcept {
     static_assert(NWORDS <= 0x7FFF'FFFFU, "NWORDS exceeds int range");
@@ -159,6 +188,85 @@ inline int bitmap_highest(const uint64_t* bits) noexcept {
         if (bits[static_cast<uint32_t>(w)]) {
             return w * 64 + 63 - __builtin_clzll(bits[static_cast<uint32_t>(w)]);
         }
+    }
+    return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Hierarchical bitmap helpers — FALLBACK PATH (called when best level drains)
+//
+// Two-level structure:
+//   Level 2 (top):  summary[SUMMARY_WORDS] — one bit per flat-bitmap word
+//   Level 1 (flat): bitmap[BITMAP_WORDS]   — one bit per tick
+//
+// bitmap_lowest_h  → used by best_ask fallback (ASK side: lowest tick wins)
+// bitmap_highest_h → used by best_bid fallback (BID side: highest tick wins)
+//
+// Cost: 2 TZCNT/LZCNT + 3 loads — replaces up to 138-word flat scan.
+//
+// Defined inline in the header so the compiler inlines them unconditionally
+// regardless of LTO cold-call heuristics (Pitfall 8, Idiom 6).
+// ---------------------------------------------------------------------------
+
+// Returns the lowest set tick index using the summary, or -1 if empty.
+// Algorithm:
+//   1. Find the lowest set bit in summary[]  → summary word s_w
+//   2. Find the lowest set bit in bitmap[s_w * 64 .. min(s_w*64+63, BITMAP_WORDS-1)]
+//   3. TZCNT within that flat-bitmap word gives the tick offset.
+inline int bitmap_lowest_h(const book_side_t& side) noexcept {
+    // Step 1: lowest non-empty group (TZCNT on summary)
+    for (uint32_t sw = 0U; sw < SUMMARY_WORDS; ++sw) {
+        if (side.summary[sw] == 0U) {
+            continue;
+        }
+        // summary[sw] is non-zero: bit b within it says bitmap[sw*64 + b] is non-zero.
+        uint32_t sb         = static_cast<uint32_t>(__builtin_ctzll(side.summary[sw]));
+        uint32_t bmap_word  = sw * 64U + sb;
+        // Guard: bmap_word must be in range (summary may have stale bits if
+        // BITMAP_WORDS is not a multiple of 64, but our updates are synchronous
+        // so this guard is defensive only).
+        if (bmap_word >= BITMAP_WORDS) {
+            return -1;
+        }
+        // Step 2: TZCNT within the flat-bitmap word gives the bit offset.
+        uint64_t word = side.bitmap[bmap_word];
+        if (word == 0U) {
+            // Summary bit was set but the flat-bitmap word is zero — should not
+            // happen with synchronous updates; treat as empty.
+            return -1;
+        }
+        // Tick = bmap_word * 64 + bit_within_word
+        int tick_raw = static_cast<int>(bmap_word) * 64
+                       + __builtin_ctzll(word);
+        return tick_raw;
+    }
+    return -1;
+}
+
+// Returns the highest set tick index using the summary, or -1 if empty.
+// Mirror of bitmap_lowest_h: scans summary from high to low.
+inline int bitmap_highest_h(const book_side_t& side) noexcept {
+    // Step 1: highest non-empty group (LZCNT on summary)
+    for (uint32_t sw = SUMMARY_WORDS; sw-- > 0U; ) {
+        if (side.summary[sw] == 0U) {
+            continue;
+        }
+        // Highest set bit within this summary word (63 - LZCNT).
+        uint32_t sb        = 63U - static_cast<uint32_t>(__builtin_clzll(side.summary[sw]));
+        uint32_t bmap_word = sw * 64U + sb;
+        if (bmap_word >= BITMAP_WORDS) {
+            // sb pointed past the valid range; step down within this summary word.
+            // This happens when BITMAP_WORDS % 64 != 0 and the summary word has a
+            // high bit for a non-existent bitmap word.  Find the highest valid one.
+            bmap_word = BITMAP_WORDS - 1U;
+        }
+        uint64_t word = side.bitmap[bmap_word];
+        if (word == 0U) {
+            return -1;
+        }
+        int tick_raw = static_cast<int>(bmap_word) * 64
+                       + 63 - __builtin_clzll(word);
+        return tick_raw;
     }
     return -1;
 }
@@ -236,15 +344,22 @@ public:
                                               qty_t      quantity,
                                               order_id_t taker_id) noexcept;
 
-    // Best price queries — defined in class body for guaranteed inlining.
+    // -----------------------------------------------------------------------
+    // Best price queries — FAST PATH (Idiom 6: class-body inline)
+    //
+    // Returns best_tick directly — a single field load.  No bitmap scan.
+    // best_tick is maintained synchronously on every add/cancel/match.
+    // Returns TICK_INVALID (== NULL_IDX) when the side is empty.
+    // -----------------------------------------------------------------------
+
     [[nodiscard]] tick_t best_bid() const noexcept {
-        int idx = bitmap_highest<BITMAP_WORDS>(impl_->sides[0].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        // Fast path: one field load.  best_tick is always current.
+        return impl_->sides[0].best_tick;
     }
 
     [[nodiscard]] tick_t best_ask() const noexcept {
-        int idx = bitmap_lowest<BITMAP_WORDS>(impl_->sides[1].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        // Fast path: one field load.  best_tick is always current.
+        return impl_->sides[1].best_tick;
     }
 
     // Level inspection (not on hot path)
