@@ -23,16 +23,28 @@
 / .
 / Runnable standalone: q generate.q
 / Output: orders.csv written to the same directory
+/ .
+/ CLI overrides (all optional):
+/   q generate.q -cancels 30 -output orders_cancel_heavy.csv
+/   q generate.q -theta 0.0001 -drift 0.10 -output orders_monotonic.csv
+/ Supported flags:
+/   -cancels N    cancels per add          (default 10)
+/   -drift F      per-step OU drift $      (default 0.0)
+/   -theta F      mean-reversion speed     (default 0.005)
+/   -sigma F      diffusion dollars        (default 1.25)
+/   -seed N       random seed              (default 42)
+/   -output S     output filename          (default orders.csv)
+/   -events N     total event count        (default 1000000)
 
 / -------------------------------------------------------------------
-/ Configuration
+/ Configuration (compile-time defaults)
 / -------------------------------------------------------------------
 
 TICK:0.25                    / ES tick size, dollars
 MU:5500.00                   / OU long-run mean
 THETA:0.005                  / mean-reversion speed per step
 SIGMA:1.25                   / per-step diffusion (dollars)
-STAT_STD:SIGMA%sqrt 2*THETA  / theoretical stationary std = 12.50 dollars
+DRIFT:0.0                    / per-step directional drift (dollars; 0 = neutral)
 
 BASE:4400.0                  / tick floor: CME -20% price limit (dollars)
 TICKS_PER_DOLLAR:4           / ES has 4 ticks per dollar ($0.25/tick)
@@ -41,12 +53,84 @@ MAX_TICK:8799                / tick ceiling: CME +20% price limit (inclusive)
 TOTAL_EVENTS:1000000         / total rows: ADD + CANCEL + MATCH
 SEED:42                      / random seed for reproducibility
 CANCELS_PER_ADD:10           / cancel events per add event
+OUT_FILE:"orders.csv"        / output filename (string; converted to symbol below)
 
+/ -------------------------------------------------------------------
+/ CLI parameter parsing
+/ .
+/ .z.x is a list of strings from the command line, e.g.:
+/   ("-cancels";"30";"-output";"orders_heavy.csv")
+/ .
+/ Strategy: scan .z.x for strings starting with "-"; the next
+/ string (if it exists and does not itself start with "-") is its value.
+/ Unknown flags are silently ignored.  A flag with no following value
+/ keeps the compile-time default.
+/ .
+/ Keys are stored as symbols (e.g. `cancels) so the dict has a typed
+/ key domain and lookup with in / indexing is unambiguous.
+/ -------------------------------------------------------------------
+
+cliArgs:.z.x
+cliN:count cliArgs
+
+/ Build a dict: symbol flag-name -> value-string
+/ Walk indices; when element i starts with "-", treat element i+1 as value.
+cliDict:()!()
+cliI:0
+while[cliI<cliN;
+  tok:cliArgs[cliI];
+  $["-"=first tok;
+    [
+      flagSym:`$1_tok;                          / strip "-", intern as symbol
+      $[(cliI+1)<cliN;
+        [
+          nextTok:cliArgs[cliI+1];
+          $["-"=first nextTok;
+            [cliDict[flagSym]:""; cliI+:1];    / flag has no value; advance 1
+            [cliDict[flagSym]:nextTok; cliI+:2] / store value; advance 2
+          ]
+        ];
+        [cliDict[flagSym]:""; cliI+:1]         / last token, no value
+      ]
+    ];
+    cliI+:1                                    / not a flag token; skip
+  ]
+ ]
+
+/ Helper: look up a symbol flag, return default if absent or empty string
+/ fSym: symbol key, defVal: default value, convFn: string->type converter
+cliGet:{[fSym;defVal;convFn]
+  $[fSym in key cliDict;
+    [v:cliDict fSym; $[0<count v; convFn v; defVal]];
+    defVal
+  ]
+ }
+
+/ Apply overrides (mutate globals so everything downstream picks them up)
+/ NOTE: use "J"$ and "F"$ (uppercase) to parse strings as numbers.
+/ Backtick casts (`long$, `float$) convert char-by-char — they do NOT parse.
+CANCELS_PER_ADD:cliGet[`cancels; CANCELS_PER_ADD; "J"$]
+DRIFT          :cliGet[`drift;   DRIFT;           "F"$]
+THETA          :cliGet[`theta;   THETA;            "F"$]
+SIGMA          :cliGet[`sigma;   SIGMA;            "F"$]
+SEED           :cliGet[`seed;    SEED;             "J"$]
+TOTAL_EVENTS   :cliGet[`events;  TOTAL_EVENTS;     "J"$]
+OUT_FILE       :cliGet[`output;  OUT_FILE;         {x}]    / keep as string
+
+/ -------------------------------------------------------------------
+/ Derived OU statistic (must be recomputed after possible THETA/SIGMA override)
+/ -------------------------------------------------------------------
+
+STAT_STD:SIGMA%sqrt 2*THETA
+
+/ -------------------------------------------------------------------
 / Derived counts
 / Each add block: 1 ADD + CANCELS_PER_ADD CANCELs = 11 events
 / Remaining events (after all blocks) are MATCHes
 / Block + 1 MATCH per block => 12 events per "cycle"
 / ADDS_COUNT = floor(TOTAL / 12)
+/ -------------------------------------------------------------------
+
 ADDS_COUNT:floor TOTAL_EVENTS%1+CANCELS_PER_ADD+1
 CANCEL_COUNT:CANCELS_PER_ADD*ADDS_COUNT
 MATCH_COUNT:TOTAL_EVENTS-ADDS_COUNT+CANCEL_COUNT
@@ -90,15 +174,23 @@ genNormals:{[n]
 
 / -------------------------------------------------------------------
 / OU price path
-/ P[t+1] = P[t] + theta*(mu - P[t]) + sigma*Z[t]
+/ P[t+1] = P[t] + theta*(mu - P[t]) + drift + sigma*Z[t]
 / Implemented with scan (\) seeded at MU.
 / q's seeded scan: seed {f}\ vec returns count[vec] elements.
 / The seed (MU) is NOT included in the result.
 / We snap each step to the nearest valid ES tick.
+/ DRIFT is 0.0 in the default workload (neutral OU).
+/ A non-zero DRIFT (e.g. +0.10) biases the walk upward each step.
 / -------------------------------------------------------------------
 
 ouNormals:genNormals ADDS_COUNT
-midPrices:snapTick MU {x+(THETA*(MU-x))+(SIGMA*y)}\ ouNormals
+midPrices:snapTick MU {x+(THETA*(MU-x))+DRIFT+(SIGMA*y)}\ ouNormals
+
+/ Clamp mid-prices so ticks stay within [0, MAX_TICK].
+/ Right-to-left: pMax& clips from above, pMin| clips from below.
+pMin:BASE+0%TICKS_PER_DOLLAR       / = 4400.0 (tick 0)
+pMax:BASE+MAX_TICK%TICKS_PER_DOLLAR / = 6599.75 (tick 8799)
+midPrices:pMin|pMax&midPrices
 
 / midPrices has exactly ADDS_COUNT elements — one mid-price per ADD event.
 
@@ -150,7 +242,7 @@ addQtys:genQty ADDS_COUNT
 / which is acceptable for synthetic benchmark data.
 / -------------------------------------------------------------------
 
-BLOCK:1+CANCELS_PER_ADD      / rows per block: 1 ADD + 10 CANCELs
+BLOCK:1+CANCELS_PER_ADD      / rows per block: 1 ADD + N CANCELs
 
 bidLive:0#0j                 / row indices of live BID ADDs
 askLive:0#0j                 / row indices of live ASK ADDs
@@ -275,6 +367,7 @@ $[0<count outOfRange;
 / Write CSV
 / Tick column is long; string converts to plain integer (e.g. "4391").
 / No float formatting needed.
+/ outPath is built from OUT_FILE so the -output flag controls it.
 / -------------------------------------------------------------------
 
 hdr:"event_type,side,tick,quantity,ref_idx"
@@ -287,7 +380,7 @@ colRef    :string allEvtRef
 
 rows:colEvtType,'",",'colSide,'",",'colTick,'",",'colQty,'",",'colRef
 
-outPath:`:orders.csv
+outPath:`$":",OUT_FILE
 outPath 0: enlist[hdr],rows
 
 / -------------------------------------------------------------------
@@ -312,17 +405,24 @@ actualRatio:cancelCnt%addCnt
 
 -1 "";
 -1 "=== E-mini Order Book Generator Summary ===";
--1 "Total rows written    : ",string totalRows;
--1 "  ADD events          : ",string addCnt;
--1 "  CANCEL events       : ",string cancelCnt;
--1 "  MATCH events        : ",string matchCnt;
--1 "Cancel-to-add ratio   : ",.Q.f[2] actualRatio;
--1 "Tick min (non-zero)   : ",string tkMin;
--1 "Tick max              : ",string tkMax;
--1 "Tick mean             : ",.Q.f[2] tkMean;
--1 "OU stat std (theory)  : ",(.Q.f[2] STAT_STD)," dollars / ",(string`long$STAT_STD%TICK)," ticks";
+-1 "Parameters used:";
+-1 "  theta              : ",.Q.f[6] THETA;
+-1 "  sigma              : ",.Q.f[4] SIGMA;
+-1 "  drift              : ",.Q.f[4] DRIFT;
+-1 "  seed               : ",string SEED;
+-1 "  cancels_per_add    : ",string CANCELS_PER_ADD;
+-1 "  total_events       : ",string TOTAL_EVENTS;
+-1 "Total rows written   : ",string totalRows;
+-1 "  ADD events         : ",string addCnt;
+-1 "  CANCEL events      : ",string cancelCnt;
+-1 "  MATCH events       : ",string matchCnt;
+-1 "Cancel-to-add ratio  : ",.Q.f[2] actualRatio;
+-1 "Tick min (non-zero)  : ",string tkMin;
+-1 "Tick max             : ",string tkMax;
+-1 "Tick mean            : ",.Q.f[2] tkMean;
+-1 "OU stat std (theory) : ",(.Q.f[2] STAT_STD)," dollars / ",(string`long$STAT_STD%TICK)," ticks";
 -1 "OU stat std (observed): ",(.Q.f[2] ouObsStd)," dollars / ",(string`long$ouObsStd%TICK)," ticks";
--1 "Output               : orders.csv";
+-1 "Output               : ",OUT_FILE;
 -1 "";
 
 exit 0
