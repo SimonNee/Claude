@@ -139,3 +139,4 @@ cpp/eth/cpp/bench_book_cpp
 cpp/eth/data/events.csv
 cpp/eth/data/events_volatile.csv
 cpp/eth/data/events_trending.csv
+cpp/emini/cpp/*.s
