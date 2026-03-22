@@ -29,11 +29,8 @@ static inline tick_t bitmap_best_ask(const uint64_t *bitmap)
 {
     for (uint32_t w = 0U; w < BITMAP_WORDS; ++w) {
         if (bitmap[w] != 0U) {
-            uint32_t bit  = (uint32_t)__builtin_ctzll(bitmap[w]);
-            uint32_t tick = w * 64U + bit;
-            if (tick < MAX_TICKS)
-                return tick;
-            return TICK_INVALID; /* word straddles MAX_TICKS boundary */
+            uint32_t bit = (uint32_t)__builtin_ctzll(bitmap[w]);
+            return w * 64U + bit;
         }
     }
     return TICK_INVALID;
@@ -47,15 +44,10 @@ static inline tick_t bitmap_best_ask(const uint64_t *bitmap)
  */
 static inline tick_t bitmap_best_bid(const uint64_t *bitmap)
 {
-    uint32_t w = BITMAP_WORDS;
-    while (w > 0U) {
-        --w;
+    for (int w = (int)BITMAP_WORDS - 1; w >= 0; --w) {
         if (bitmap[w] != 0U) {
-            uint32_t bit  = 63U - (uint32_t)__builtin_clzll(bitmap[w]);
-            uint32_t tick = w * 64U + bit;
-            if (tick < MAX_TICKS)
-                return tick;
-            /* tick >= MAX_TICKS: word straddles boundary; keep scanning */
+            uint32_t bit = 63U - (uint32_t)__builtin_clzll(bitmap[w]);
+            return (uint32_t)w * 64U + bit;
         }
     }
     return TICK_INVALID;

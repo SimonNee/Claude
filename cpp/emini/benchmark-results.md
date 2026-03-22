@@ -356,8 +356,92 @@ Significantly higher than synthetic runs (22–24 cy) — the OU book has realis
 
 ---
 
+---
+
+## Run 7 — 2026-03-22 (C only — bitmap scan algorithm correction)
+
+### Changes from Run 4
+
+Two defensive boundary checks removed from `bitmap.h` to make the C algorithm
+identical to the C++ `bitmap_lowest` / `bitmap_highest` templates:
+
+- `bitmap_best_ask`: removed `if (tick < MAX_TICKS)` guard on the non-zero word path.
+  Previously returned `TICK_INVALID` if the tick straddled the boundary; now returns
+  the tick directly, matching C++ which also performs no in-loop bounds check.
+- `bitmap_best_bid`: same change — removed `if (tick < MAX_TICKS)` guard and the
+  "keep scanning" continuation path.
+- Loop variable changed to `int w` (from `uint32_t w`) to enable `subq/jb` borrow-flag
+  termination, matching the C++ template form.
+
+**Why the guards were safe to remove**: the invariant that no bitmap bit above
+`MAX_TICKS` can ever be set is enforced at every write path into the bitmap.
+`queue_enqueue` (the only function that sets a bit) is `static` and reachable only
+through `book_add` and `book_add_tick`, both of which reject `tick >= MAX_TICKS`
+before calling `queue_enqueue`. The in-loop guards were defensive checks against a
+condition the book's own API boundary already makes impossible.
+
+**Root cause of the original gap** (identified by agentDuality + agentASM):
+The `if (tick < MAX_TICKS)` check inside `bitmap_best_bid` created a second back-edge
+in the loop body (the "keep scanning" path), forcing GCC into a two-path loop structure
+with an explicit pointer walk (`subq $8, %rdi`) and a running tick-ceiling sentinel
+register (`edx`), adding 2 extra instructions per word vs. the C++ form. The C++
+template had no such check and compiled to a clean 5-instruction-per-word loop using
+scaled-index addressing (`(%rdi,%rax,8)`) and borrow-flag termination (`subq/jb`).
+
+---
+
+### B5 — best_bid Scan (C, data-driven)
+
+| Implementation | Run 4 median | Run 7 median | Delta | p99 |
+|---|---|---|---|---|
+| C | 119 cy | **91 cy** | **−28 cy** | 152 cy |
+| C++ (Run 6) | 87 cy | — | — | 151 cy |
+
+Residual gap: 5 cy (noise). The algorithms are now equivalent.
+
+---
+
+### All benchmarks — Run 7 (C only, C++ unchanged from Run 6)
+
+| Benchmark | C Run 4 | C Run 7 | C++ Run 6 |
+|---|---|---|---|
+| Add | 43 cy | 32 cy | 34 cy |
+| Cancel (realistic) | 39 cy | 37 cy | 22 cy |
+| Match (data-driven) | 176 cy | 164 cy | 140 cy |
+| best_bid (realistic) | 119 cy | **91 cy** | 86 cy |
+
+---
+
+## Run 8 — 2026-03-22 (both — same session, canonical current numbers)
+
+Both implementations re-run in the same session to provide a clean side-by-side
+comparison after the Run 7 bitmap algorithm correction.
+
+| Benchmark | C | C++ |
+|---|---|---|
+| Add | 32 cy | 34 cy |
+| Cancel (realistic) | 38 cy | 22 cy |
+| Match (data-driven) | 162 cy | 135 cy |
+| best_bid (realistic) | 88 cy | 86 cy |
+
+best_bid gap: 2 cy — noise. Algorithms are equivalent and results are now
+directly comparable.
+
+---
+
+## Current Best Numbers (Run 8 — data-driven, integer ticks, warm cache, core 2)
+
+| Benchmark | C | C++ |
+|---|---|---|
+| Add | 32 cy | 34 cy |
+| Cancel (realistic) | 38 cy | 22 cy |
+| Match (data-driven) | 162 cy | 135 cy |
+| best_bid (realistic) | 88 cy | 86 cy |
+
+---
+
 ## Open Items
 
 - [ ] C doubly-linked promotion decision — **deferred to server hardware**. 53 cy at q=10 mid is 3 cy over the 50 cy threshold, within laptop noise. `isolcpus` insufficient on a mobile chip (thermal throttling, SMI, power states). Retest on deployment-class hardware (Xeon/EPYC) with IRQ affinity pinned away from the test core. Threshold and promote path unchanged — see architect-spec.md Decision Register.
 - [ ] Revisit C++ bitmap unroll if future benchmark shows N=1 worst case becoming load-bearing
-- [ ] Investigate C best_bid gap vs C++ (119 cy vs 87 cy) on realistic bitmap occupancy
+- [x] Investigate C best_bid gap vs C++ — resolved in Run 7/8 (algorithmic parity restored, 2 cy residual is noise)
