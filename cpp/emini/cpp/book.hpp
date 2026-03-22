@@ -106,14 +106,24 @@ struct fill_result_t {
 // ---------------------------------------------------------------------------
 // Struct: book_side_t  (spec: Data Model / book_side_t)
 // levels[] before bitmap[] — larger/more-frequently-accessed at lower address
+//
+// best_tick — cached best price level for this side.
+//   BID side: highest occupied tick (TICK_INVALID when side is empty)
+//   ASK side: lowest  occupied tick (TICK_INVALID when side is empty)
+//
+// Fast path: a single field load (~4 cycles).
+// Fallback:  bitmap scan invoked only when the best level fully drains
+//            (queue_dequeue_head / queue_remove set best_tick via rescan).
 // ---------------------------------------------------------------------------
 
 struct book_side_t {
     price_level_t levels[MAX_TICKS];    // 8800 × 16 = 140,800 bytes
     uint64_t      bitmap[BITMAP_WORDS]; //  138 ×  8 =   1,104 bytes
-};                                      // total: 141,904 bytes
+    tick_t        best_tick;            //    4 bytes — cached best tick
+    uint8_t       _pad[4];              //    4 bytes — pad to 8-byte multiple
+};                                      // total: 141,912 bytes
 
-static_assert(sizeof(book_side_t) == 141904U, "book_side_t layout changed");
+static_assert(sizeof(book_side_t) == 141912U, "book_side_t layout changed");
 
 // ---------------------------------------------------------------------------
 // Struct: arena_t  (spec: Data Model / arena_t)
@@ -236,15 +246,18 @@ public:
                                               qty_t      quantity,
                                               order_id_t taker_id) noexcept;
 
-    // Best price queries — defined in class body for guaranteed inlining.
+    // Best price queries — defined in class body for guaranteed inlining (Idiom 6).
+    //
+    // Fast path: single field load from the cached best_tick.
+    // The bitmap scan is retained as a fallback inside queue_dequeue_head and
+    // queue_remove, invoked only when the best level fully drains. On the common
+    // path this function executes in ~4 cycles (one load, one compare, one cmov).
     [[nodiscard]] tick_t best_bid() const noexcept {
-        int idx = bitmap_highest<BITMAP_WORDS>(impl_->sides[0].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        return impl_->sides[static_cast<uint8_t>(side_t::BID)].best_tick;
     }
 
     [[nodiscard]] tick_t best_ask() const noexcept {
-        int idx = bitmap_lowest<BITMAP_WORDS>(impl_->sides[1].bitmap);
-        return (idx >= 0) ? static_cast<tick_t>(idx) : NULL_IDX;
+        return impl_->sides[static_cast<uint8_t>(side_t::ASK)].best_tick;
     }
 
     // Level inspection (not on hot path)

@@ -39,6 +39,9 @@ Book::Book(double base_price) {
 
     // Initialise all price levels to empty sentinel.
     // NULL_IDX == 0xFFFFFFFF != 0, so memset alone is insufficient for head/tail.
+    // TICK_INVALID is also 0xFFFFFFFF, so best_tick must be set explicitly
+    // alongside the other sentinel fields — the same reason head/tail require
+    // explicit initialisation rather than relying on memset(0).
     for (uint32_t s = 0U; s < 2U; ++s) {
         book_side_t& sd = impl_->sides[s];
         for (uint32_t t = 0U; t < MAX_TICKS; ++t) {
@@ -48,6 +51,7 @@ Book::Book(double base_price) {
             sd.levels[t].total_qty = 0U;
         }
         std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        sd.best_tick = TICK_INVALID;  // side is empty; no cached best yet
     }
 
     impl_->arena.next_slot = 0U;
@@ -108,6 +112,21 @@ order_id_t Book::add(side_t side, double price, qty_t quantity) noexcept {
     // Enqueue at FIFO tail (Module 2)
     queue_enqueue(sd.levels[tick], impl_->arena, slot);
 
+    // Maintain cached best_tick (fast path: compare and conditionally update).
+    // BID side: higher tick is a better (more aggressive) bid.
+    // ASK side: lower  tick is a better (more aggressive) ask.
+    // TICK_INVALID (== UINT32_MAX) means the side was previously empty;
+    // the first order at any tick unconditionally becomes the best.
+    if (side == side_t::BID) {
+        if (sd.best_tick == TICK_INVALID || tick > sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    } else {
+        if (sd.best_tick == TICK_INVALID || tick < sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    }
+
     return slot;
 }
 
@@ -140,6 +159,17 @@ order_id_t Book::add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept 
 
     queue_enqueue(sd.levels[tick], impl_->arena, slot);
 
+    // Maintain cached best_tick — same logic as Book::add (see comments there).
+    if (side == side_t::BID) {
+        if (sd.best_tick == TICK_INVALID || tick > sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    } else {
+        if (sd.best_tick == TICK_INVALID || tick < sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    }
+
     return slot;
 }
 
@@ -169,7 +199,13 @@ bool Book::cancel(order_id_t order_id, side_t side, tick_t tick) noexcept {
 
     // queue_remove performs O(1) head-cancel or O(q) mid-queue scan,
     // sets DEAD_FLAG on the node, and clears the bitmap bit if level empties.
-    return queue_remove(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    // The IsBid template parameter selects the correct bitmap scan direction
+    // for the best_tick fallback refresh when the cancelled level drains.
+    if (side == side_t::BID) {
+        return queue_remove<true> (sd.levels[tick], impl_->arena, sd, tick, order_id);
+    } else {
+        return queue_remove<false>(sd.levels[tick], impl_->arena, sd, tick, order_id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +264,7 @@ void Book::reset() noexcept {
             sd.levels[t].total_qty = 0U;
         }
         std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        sd.best_tick = TICK_INVALID;  // reset: side is empty again
     }
     impl_->arena.next_slot = 0U;
     // base_price is retained across reset (spec)

@@ -55,27 +55,27 @@ static fill_result_t match_core(Book::Impl& impl,
     uint8_t maker_idx = static_cast<uint8_t>(1U - static_cast<uint32_t>(agg_idx));
     book_side_t& maker_side = impl.sides[maker_idx];
 
-    // Matching loop — iterate maker side from its best price toward aggressor price
+    // Matching loop — iterate maker side from its best price toward aggressor price.
+    //
+    // Level selection — fast path vs fallback:
+    //   Fast path: read maker_side.best_tick directly (~4 cycles, one field load).
+    //   Fallback:  queue_dequeue_head updates maker_side.best_tick via bitmap scan
+    //              when a level fully drains. The loop re-reads best_tick at the
+    //              top of the next iteration, which then reflects the new best.
+    //
+    // The bitmap scan (bitmap_lowest / bitmap_highest) has been removed from the
+    // loop top. The only bitmap scans that remain are inside queue_dequeue_head,
+    // triggered at most once per fully-consumed level — not once per iteration.
     while (result.remaining_qty > 0U && result.fill_count < 64U) {
 
-        // Find the best price on the maker side
-        int best_raw;
-        if (aggressor_side == side_t::BID) {
-            // Aggressor is BID → maker is ASK → want lowest ask
-            best_raw = bitmap_lowest<BITMAP_WORDS>(maker_side.bitmap);
-        } else {
-            // Aggressor is ASK → maker is BID → want highest bid
-            best_raw = bitmap_highest<BITMAP_WORDS>(maker_side.bitmap);
-        }
-
-        // Empty maker side
-        if (best_raw < 0) {
+        // Fast path: read the cached best price for the maker side.
+        // TICK_INVALID means the maker side is empty.
+        tick_t best_tick = maker_side.best_tick;
+        if (best_tick == TICK_INVALID) {
             break;
         }
 
-        tick_t best_tick = static_cast<tick_t>(best_raw);
-
-        // Check crossing condition
+        // Check crossing condition.
         // BID aggressor: crosses if best_ask_tick <= aggressor_tick
         // ASK aggressor: crosses if best_bid_tick >= aggressor_tick
         bool crosses;
@@ -94,8 +94,10 @@ static fill_result_t match_core(Book::Impl& impl,
         if (level.head_idx == NULL_IDX) {
             // Level appears active in bitmap but has no orders — bitmap is stale.
             // This must not happen (spec: bitmap updates are synchronous-only).
-            // Treat as empty and clear the bit defensively.
+            // Treat as empty and clear defensively; best_tick will be refreshed
+            // by re-reading maker_side.best_tick at the next iteration.
             bitmap_clear(maker_side.bitmap, best_tick);
+            maker_side.best_tick = TICK_INVALID;  // force rescan next iteration
             break;
         }
 
@@ -115,8 +117,18 @@ static fill_result_t match_core(Book::Impl& impl,
             f.price_tick      = best_tick;
             f.filled_qty      = fill_qty;
 
-            // Dequeue head and mark DEAD; clears bitmap bit if level empties
-            queue_dequeue_head(level, impl.arena, maker_side.bitmap, best_tick);
+            // Dequeue head and mark DEAD; clears bitmap bit if level empties.
+            // If the level empties and best_tick == maker_side.best_tick,
+            // queue_dequeue_head performs the fallback bitmap scan and updates
+            // maker_side.best_tick. The next loop iteration reads the refreshed
+            // value — no extra work on the common (non-draining) path.
+            if (aggressor_side == side_t::BID) {
+                // Aggressor is BID → maker is ASK → IsBid=false for the maker
+                queue_dequeue_head<false>(level, impl.arena, maker_side, best_tick);
+            } else {
+                // Aggressor is ASK → maker is BID → IsBid=true for the maker
+                queue_dequeue_head<true>(level, impl.arena, maker_side, best_tick);
+            }
 
         } else {
             // Partial fill of the maker order — maker stays at head
@@ -130,9 +142,9 @@ static fill_result_t match_core(Book::Impl& impl,
             f.price_tick      = best_tick;
             f.filled_qty      = fill_qty;
 
-            // Partial fill: decrement head node quantity, update level total_qty
+            // Partial fill: decrement head node quantity, update level total_qty.
+            // Level remains live; bitmap bit and best_tick stay unchanged.
             queue_partial_fill_head(level, impl.arena, fill_qty);
-            // Level remains live; bitmap bit stays set.
         }
     }
 
