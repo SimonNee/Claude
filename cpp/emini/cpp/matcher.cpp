@@ -23,6 +23,25 @@
  *   - remaining_qty == 0, or
  *   - no more crossing prices exist, or
  *   - fill_count == 64  (spec-defined bound)
+ *
+ * Combined best-bid/ask strategy in match_core:
+ *
+ *   FAST PATH — level selection:
+ *     Read maker_side.best_tick directly — one field load, no bitmap scan.
+ *     The field is kept current by the add / cancel paths.
+ *
+ *   FALLBACK PATH — on drain:
+ *     queue_dequeue_head<IsBid> updates best_tick via hierarchical bitmap
+ *     (bitmap_highest_h / bitmap_lowest_h) when the best level empties.
+ *     The 138-word flat scan is never called.
+ *
+ * IsBid template on match_core selects the correct direction:
+ *   IsBid = true  → aggressor is BID, maker is ASK (want lowest ask)
+ *   IsBid = false → aggressor is ASK, maker is BID (want highest bid)
+ *
+ * The maker side's IsBid for the queue operations is the OPPOSITE direction:
+ *   maker is ASK (IsBid=false for queue) when aggressor is BID
+ *   maker is BID (IsBid=true  for queue) when aggressor is ASK
  */
 
 #include "matcher.hpp"
@@ -33,14 +52,18 @@ namespace es::book {
 using namespace es::book::internal;
 
 // ---------------------------------------------------------------------------
-// match_core — shared matching loop, called after the aggressor_tick is known.
+// match_core — templated on AggressorIsBid.
 //
-// Factored out so that execute() (double API) and execute_by_tick() (tick API)
-// share a single implementation with no code duplication.
+// AggressorIsBid = true  → BID aggressor, ASK maker side, lowest ask is best
+// AggressorIsBid = false → ASK aggressor, BID maker side, highest bid is best
+//
+// Templating allows the compiler to eliminate the runtime branch on side
+// direction entirely and select the correct queue_dequeue_head instantiation
+// at compile time.
 // ---------------------------------------------------------------------------
 
+template<bool AggressorIsBid>
 static fill_result_t match_core(Book::Impl& impl,
-                                side_t      aggressor_side,
                                 tick_t      aggressor_tick,
                                 qty_t       quantity,
                                 order_id_t  taker_id) noexcept {
@@ -48,38 +71,28 @@ static fill_result_t match_core(Book::Impl& impl,
     result.fill_count    = 0U;
     result.remaining_qty = quantity;
 
-    // Determine maker side (opposite of aggressor).
-    // agg_idx is 0 (BID) or 1 (ASK); maker_idx is the complementary value.
-    // The subtraction 1U - agg_idx promotes both to unsigned int; explicit cast to uint8_t.
-    uint8_t agg_idx   = static_cast<uint8_t>(aggressor_side);
-    uint8_t maker_idx = static_cast<uint8_t>(1U - static_cast<uint32_t>(agg_idx));
+    // Select the maker side (opposite of aggressor).
+    // AggressorIsBid=true  → aggressor side index 0 (BID) → maker index 1 (ASK)
+    // AggressorIsBid=false → aggressor side index 1 (ASK) → maker index 0 (BID)
+    constexpr uint8_t maker_idx = AggressorIsBid ? 1U : 0U;
     book_side_t& maker_side = impl.sides[maker_idx];
 
-    // Matching loop — iterate maker side from its best price toward aggressor price
+    // Matching loop — consume maker orders from the best price inward.
     while (result.remaining_qty > 0U && result.fill_count < 64U) {
 
-        // Find the best price on the maker side
-        int best_raw;
-        if (aggressor_side == side_t::BID) {
-            // Aggressor is BID → maker is ASK → want lowest ask
-            best_raw = bitmap_lowest<BITMAP_WORDS>(maker_side.bitmap);
-        } else {
-            // Aggressor is ASK → maker is BID → want highest bid
-            best_raw = bitmap_highest<BITMAP_WORDS>(maker_side.bitmap);
-        }
+        // FAST PATH: read best_tick — one field load, no bitmap scan.
+        tick_t best_tick = maker_side.best_tick;
 
-        // Empty maker side
-        if (best_raw < 0) {
+        // Empty maker side.
+        if (best_tick == TICK_INVALID) {
             break;
         }
 
-        tick_t best_tick = static_cast<tick_t>(best_raw);
-
-        // Check crossing condition
-        // BID aggressor: crosses if best_ask_tick <= aggressor_tick
-        // ASK aggressor: crosses if best_bid_tick >= aggressor_tick
+        // Check crossing condition.
+        // BID aggressor (AggressorIsBid=true):  crosses if best_ask_tick <= aggressor_tick
+        // ASK aggressor (AggressorIsBid=false): crosses if best_bid_tick >= aggressor_tick
         bool crosses;
-        if (aggressor_side == side_t::BID) {
+        if (AggressorIsBid) {
             crosses = (best_tick <= aggressor_tick);
         } else {
             crosses = (best_tick >= aggressor_tick);
@@ -88,51 +101,55 @@ static fill_result_t match_core(Book::Impl& impl,
             break;
         }
 
-        // Drain the head of the best maker level
+        // Drain the head of the best maker level.
         price_level_t& level = maker_side.levels[best_tick];
 
         if (level.head_idx == NULL_IDX) {
-            // Level appears active in bitmap but has no orders — bitmap is stale.
-            // This must not happen (spec: bitmap updates are synchronous-only).
-            // Treat as empty and clear the bit defensively.
-            bitmap_clear(maker_side.bitmap, best_tick);
+            // Level appears active in best_tick but has no orders.
+            // This must not happen with synchronous updates (spec).
+            // Treat as empty: invalidate best_tick defensively and stop.
+            maker_side.best_tick = TICK_INVALID;
             break;
         }
 
-        order_node_t& head = impl.arena.nodes[level.head_idx];
-        qty_t maker_qty    = head.quantity;
-        qty_t fill_qty;
+        order_node_t& head  = impl.arena.nodes[level.head_idx];
+        qty_t         maker_qty = head.quantity;
+        qty_t         fill_qty;
 
         if (maker_qty <= result.remaining_qty) {
-            // Full fill of the maker order
-            fill_qty = maker_qty;
+            // Full fill of the maker order.
+            fill_qty              = maker_qty;
             result.remaining_qty -= fill_qty;
 
-            // Record fill
-            fill_t& f         = result.fills[result.fill_count++];
-            f.maker_order_id  = head.order_id;
-            f.taker_order_id  = taker_id;
-            f.price_tick      = best_tick;
-            f.filled_qty      = fill_qty;
+            // Record fill.
+            fill_t& f        = result.fills[result.fill_count++];
+            f.maker_order_id = head.order_id;
+            f.taker_order_id = taker_id;
+            f.price_tick     = best_tick;
+            f.filled_qty     = fill_qty;
 
-            // Dequeue head and mark DEAD; clears bitmap bit if level empties
-            queue_dequeue_head(level, impl.arena, maker_side.bitmap, best_tick);
+            // Dequeue head and mark DEAD.
+            // FALLBACK PATH (inside queue_dequeue_head): if the level empties
+            // and best_tick == tick, the hierarchical bitmap finds the new best.
+            // MakerIsBid is opposite of AggressorIsBid.
+            queue_dequeue_head<!AggressorIsBid>(
+                maker_side, level, impl.arena, best_tick);
 
         } else {
-            // Partial fill of the maker order — maker stays at head
-            fill_qty = result.remaining_qty;
+            // Partial fill of the maker order — maker stays at head.
+            fill_qty             = result.remaining_qty;
             result.remaining_qty = 0U;
 
-            // Record fill
-            fill_t& f         = result.fills[result.fill_count++];
-            f.maker_order_id  = head.order_id;
-            f.taker_order_id  = taker_id;
-            f.price_tick      = best_tick;
-            f.filled_qty      = fill_qty;
+            // Record fill.
+            fill_t& f        = result.fills[result.fill_count++];
+            f.maker_order_id = head.order_id;
+            f.taker_order_id = taker_id;
+            f.price_tick     = best_tick;
+            f.filled_qty     = fill_qty;
 
-            // Partial fill: decrement head node quantity, update level total_qty
+            // Partial fill: decrement head node quantity, update level total_qty.
+            // Level remains live; best_tick is unchanged.
             queue_partial_fill_head(level, impl.arena, fill_qty);
-            // Level remains live; bitmap bit stays set.
         }
     }
 
@@ -165,7 +182,11 @@ fill_result_t Matcher::execute(Book::Impl& impl,
         return early;
     }
 
-    return match_core(impl, aggressor_side, aggressor_tick, quantity, taker_id);
+    if (aggressor_side == side_t::BID) {
+        return match_core<true>(impl, aggressor_tick, quantity, taker_id);
+    } else {
+        return match_core<false>(impl, aggressor_tick, quantity, taker_id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +214,11 @@ fill_result_t Matcher::execute_by_tick(Book::Impl& impl,
         return early;
     }
 
-    return match_core(impl, aggressor_side, tick, quantity, taker_id);
+    if (aggressor_side == side_t::BID) {
+        return match_core<true>(impl, tick, quantity, taker_id);
+    } else {
+        return match_core<false>(impl, tick, quantity, taker_id);
+    }
 }
 
 } // namespace es::book

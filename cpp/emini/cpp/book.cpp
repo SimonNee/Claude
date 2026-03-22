@@ -7,9 +7,23 @@
  * Module decomposition matches spec section "Module Boundaries":
  *   Module 1 — Arena       (internal.hpp :: arena_alloc)
  *   Module 2 — Level Queue (internal.hpp :: queue_*)
- *   Module 3 — Bitmap      (internal.hpp :: bitmap_*)
+ *   Module 3 — Bitmap      (internal.hpp :: level_set / level_clear)
  *   Module 4 — Matcher     (matcher.hpp  :: Matcher::execute)
  *   Module 5 — Book        (this file)
+ *
+ * Combined best-bid/ask strategy:
+ *
+ *   ADD PATH:
+ *     1. If level was empty, call level_set (maintains bitmap + summary).
+ *     2. Update best_tick with a compare — no scan.
+ *        BID: best_tick = max(best_tick, tick)   if best_tick != TICK_INVALID
+ *        ASK: best_tick = min(best_tick, tick)   if best_tick != TICK_INVALID
+ *        When side was empty (TICK_INVALID), best_tick = tick directly.
+ *
+ *   CANCEL / MATCH DRAIN PATH (in internal.hpp queue_remove / queue_dequeue_head):
+ *     If the level empties AND tick == best_tick, call bitmap_highest_h /
+ *     bitmap_lowest_h for the new best (hierarchical fallback — 2 TZCNT/LZCNT).
+ *     Never falls back to the 138-word flat scan.
  */
 
 #include "book.hpp"
@@ -47,7 +61,10 @@ Book::Book(double base_price) {
             sd.levels[t].count     = 0U;
             sd.levels[t].total_qty = 0U;
         }
-        std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        std::memset(sd.bitmap,  0, sizeof(sd.bitmap));
+        std::memset(sd.summary, 0, sizeof(sd.summary));
+        sd.best_tick  = TICK_INVALID;  // side starts empty
+        sd._side_pad  = 0U;
     }
 
     impl_->arena.next_slot = 0U;
@@ -74,6 +91,53 @@ Book::Book(Book&& other) noexcept : impl_(other.impl_) {
 }
 
 // ---------------------------------------------------------------------------
+// book_add_impl — shared add logic used by add() and add_by_tick().
+//
+// Factored out to avoid duplicating the best_tick update logic.
+// Not a member function — internal linkage within this TU.
+// ---------------------------------------------------------------------------
+
+static order_id_t book_add_impl(Book::Impl& impl,
+                                side_t      side,
+                                tick_t      tick,
+                                qty_t       quantity) noexcept {
+    slot_idx_t slot = arena_alloc(impl.arena, quantity);
+    if (slot == NULL_IDX) {
+        return NULL_IDX;
+    }
+
+    book_side_t&   sd    = impl.sides[static_cast<uint8_t>(side)];
+    price_level_t& level = sd.levels[tick];
+
+    // level_set maintains both bitmap[] and summary[] when a level
+    // transitions from empty to non-empty (synchronous, Module 3).
+    if (level.count == 0U) {
+        level_set(sd, tick);
+    }
+
+    // Enqueue at FIFO tail (Module 2).
+    queue_enqueue(level, impl.arena, slot);
+
+    // ADD PATH: update best_tick — no scan.
+    //
+    // BID side (side_index 0): best bid = highest tick.
+    //   If side was empty or the new tick is higher, update.
+    // ASK side (side_index 1): best ask = lowest tick.
+    //   If side was empty or the new tick is lower, update.
+    if (side == side_t::BID) {
+        if (sd.best_tick == TICK_INVALID || tick > sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    } else {
+        if (sd.best_tick == TICK_INVALID || tick < sd.best_tick) {
+            sd.best_tick = tick;
+        }
+    }
+
+    return slot;
+}
+
+// ---------------------------------------------------------------------------
 // Book::add  (spec: Interface Specification / book_add)
 // ---------------------------------------------------------------------------
 
@@ -92,23 +156,7 @@ order_id_t Book::add(side_t side, double price, qty_t quantity) noexcept {
         return NULL_IDX;
     }
 
-    // Arena allocation (Module 1)
-    slot_idx_t slot = arena_alloc(impl_->arena, quantity);
-    if (slot == NULL_IDX) {
-        return NULL_IDX;
-    }
-
-    book_side_t& sd = this->side(side);
-
-    // Synchronous bitmap set on first order at this level (Module 3)
-    if (sd.levels[tick].count == 0U) {
-        bitmap_set(sd.bitmap, tick);
-    }
-
-    // Enqueue at FIFO tail (Module 2)
-    queue_enqueue(sd.levels[tick], impl_->arena, slot);
-
-    return slot;
+    return book_add_impl(*impl_, side, tick, quantity);
 }
 
 // ---------------------------------------------------------------------------
@@ -127,20 +175,7 @@ order_id_t Book::add_by_tick(side_t side, tick_t tick, qty_t quantity) noexcept 
         return NULL_IDX;
     }
 
-    slot_idx_t slot = arena_alloc(impl_->arena, quantity);
-    if (slot == NULL_IDX) {
-        return NULL_IDX;
-    }
-
-    book_side_t& sd = this->side(side);
-
-    if (sd.levels[tick].count == 0U) {
-        bitmap_set(sd.bitmap, tick);
-    }
-
-    queue_enqueue(sd.levels[tick], impl_->arena, slot);
-
-    return slot;
+    return book_add_impl(*impl_, side, tick, quantity);
 }
 
 // ---------------------------------------------------------------------------
@@ -167,9 +202,14 @@ bool Book::cancel(order_id_t order_id, side_t side, tick_t tick) noexcept {
 
     book_side_t& sd = this->side(side);
 
-    // queue_remove performs O(1) head-cancel or O(q) mid-queue scan,
-    // sets DEAD_FLAG on the node, and clears the bitmap bit if level empties.
-    return queue_remove(sd.levels[tick], impl_->arena, sd.bitmap, tick, order_id);
+    // queue_remove<IsBid> performs O(1) head-cancel or O(q) mid-queue scan,
+    // sets DEAD_FLAG on the node, clears bitmap/summary if level empties,
+    // and updates best_tick via hierarchical fallback if the best level drained.
+    if (side == side_t::BID) {
+        return queue_remove<true>(sd, sd.levels[tick], impl_->arena, tick, order_id);
+    } else {
+        return queue_remove<false>(sd, sd.levels[tick], impl_->arena, tick, order_id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +267,10 @@ void Book::reset() noexcept {
             sd.levels[t].count     = 0U;
             sd.levels[t].total_qty = 0U;
         }
-        std::memset(sd.bitmap, 0, sizeof(sd.bitmap));
+        std::memset(sd.bitmap,  0, sizeof(sd.bitmap));
+        std::memset(sd.summary, 0, sizeof(sd.summary));
+        sd.best_tick = TICK_INVALID;
+        sd._side_pad = 0U;
     }
     impl_->arena.next_slot = 0U;
     // base_price is retained across reset (spec)
