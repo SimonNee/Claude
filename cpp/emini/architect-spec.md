@@ -4,6 +4,7 @@
 **Inputs**: architect-requirements.md, agentContext-initial-report.md, agentContext-triz-pass.md, agentDuality-initial-report.md, agentDuality-arena-reuse.md
 **Date**: 2026-03-21
 **Target implementations**: C (agentC), C++ (agentCPP)
+**Status**: C implementation complete — preserved at tag `version-0.3-C-remove`. C++ is the active implementation.
 
 ---
 

@@ -22,7 +22,9 @@
 
 ## What It Is
 
-A limit order book for the CME E-mini S&P 500 futures contract (ES), implemented in parallel in C and C++ and benchmarked head-to-head. The book maintains resting bid and ask orders organised by price level with time priority (FIFO) within each level. The three operations are **add** (place a resting order), **cancel** (remove a resting order by its ID), and **match** (execute an incoming aggressor order against resting orders on the opposite side).
+A limit order book for the CME E-mini S&P 500 futures contract (ES), implemented in C++. The book maintains resting bid and ask orders organised by price level with time priority (FIFO) within each level. The three operations are **add** (place a resting order), **cancel** (remove a resting order by its ID), and **match** (execute an incoming aggressor order against resting orders on the opposite side).
+
+A parallel C implementation was built and benchmarked head-to-head to quantify the cost of language boundary constraints on register allocation. That work is complete; the C code is preserved at tag `version-0.3-C-remove`. Active development is C++ only.
 
 The design target is O(1) for all three operations with latencies in the 40–75 cycle range on modern hardware.
 
@@ -148,14 +150,7 @@ The matcher is a named, separate module (`matcher.c` / `matcher.cpp`). It is the
 ## Module Map
 
 ```
-C implementation (cpp/emini/c/)
-├── book.h          Public API and all type definitions
-├── bitmap.h        bitmap_best_ask / bitmap_best_bid — static inline, included by both TUs
-├── book.c          Modules 1–3 + 5: Arena, Queue, Bitmap updates, Book assembly
-├── matcher.h       Matcher interface
-└── matcher.c       Module 4: matching loop
-
-C++ implementation (cpp/emini/cpp/)
+cpp/emini/cpp/
 ├── book.hpp        Types, constants, Book class, bitmap_lowest/bitmap_highest templates
 ├── internal.hpp    Package-internal helpers: bitmap set/clear, arena alloc, queue ops (inline)
 ├── book.cpp        Book constructor, add, cancel, match, reset
@@ -163,23 +158,19 @@ C++ implementation (cpp/emini/cpp/)
 └── matcher.cpp     Matcher::execute
 ```
 
-Tests: `test_book.c` / `test_book.cpp` — 32/33 cases covering add, cancel, match, boundaries, invalid inputs, and invariant checking after every operation (ASAN + UBSAN clean).
+Tests: `test_book.cpp` — 33 cases covering add, cancel, match, boundaries, invalid inputs, and invariant checking after every operation (ASAN + UBSAN clean).
 
-Benchmarks: `bench_book.c` / `bench_book.cpp` — RDTSC-timed, 500k iterations, pinned to core 2.
+Benchmarks: `bench_book.cpp` — RDTSC-timed, data-driven (1M OU-generated events), pinned to core 2.
 
 ---
 
 ## Performance Reference (warm cache, i9-10980HK)
 
-| Operation | C | C++ |
-|---|---|---|
-| Add (single level) | 42 cy | 42 cy |
-| Cancel q=1 | 29 cy | 28 cy |
-| Cancel q=10 mid-queue | 53 cy | 47 cy |
-| Match (1 resting order) | 73 cy | 42 cy |
-| Match (10 levels consumed) | 209 cy | 174 cy |
-| Best-bid scan (live book) | 22 cy | 24 cy |
+| Operation | Cycles (i9-10980HK, core 2, `isolcpus=2`) |
+|---|---|
+| Add | 34 cy |
+| Cancel (realistic 10:1 workload) | 22 cy |
+| Match (data-driven) | 137 cy |
+| Best-bid scan | 84 cy |
 
-The C vs C++ match gap (~30 cy) reflects the C++ compiler having more context for inlining across the bitmap scan and match loop. Add and cancel are essentially identical.
-
-Full results and methodology: `benchmark-results.md`.
+Full results, methodology, and C vs C++ head-to-head history: `benchmark-results.md`.

@@ -1,5 +1,8 @@
 # E-mini Orderbook — Benchmark Results
 
+> **Note**: The C implementation is complete and preserved at tag `version-0.3-C-remove`.
+> Active development is C++ only. Runs 1–9 below include the full C vs C++ head-to-head history.
+
 ## Hardware & Build
 
 | Field | Value |
