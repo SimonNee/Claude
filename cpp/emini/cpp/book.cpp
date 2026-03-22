@@ -124,7 +124,7 @@ static order_id_t book_add_impl(Book::Impl& impl,
 
     // ADD PATH: update best_tick — no scan.
     // IsBid selects direction at compile time; no runtime branch.
-    if (IsBid) {
+    if constexpr (IsBid) {
         if (sd.best_tick == TICK_INVALID || tick > sd.best_tick) {
             sd.best_tick = tick;
         }

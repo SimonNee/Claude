@@ -188,7 +188,7 @@ inline order_node_t* queue_dequeue_head(book_side_t&   bside,
         // 138-word flat scan.
         if (tick == bside.best_tick) {
             int new_best;
-            if (IsBid) {
+            if constexpr (IsBid) {
                 // BID: highest remaining tick is the new best bid.
                 new_best = bitmap_highest_h(bside);
             } else {
@@ -242,7 +242,7 @@ inline bool queue_remove(book_side_t&   bside,
         // FALLBACK PATH: hierarchical rescan for new best_tick.
         if (tick == bside.best_tick) {
             int new_best;
-            if (IsBid) {
+            if constexpr (IsBid) {
                 new_best = bitmap_highest_h(bside);
             } else {
                 new_best = bitmap_lowest_h(bside);

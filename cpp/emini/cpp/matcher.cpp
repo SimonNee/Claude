@@ -92,7 +92,7 @@ static fill_result_t match_core(Book::Impl& impl,
         // BID aggressor (AggressorIsBid=true):  crosses if best_ask_tick <= aggressor_tick
         // ASK aggressor (AggressorIsBid=false): crosses if best_bid_tick >= aggressor_tick
         bool crosses;
-        if (AggressorIsBid) {
+        if constexpr (AggressorIsBid) {
             crosses = (best_tick <= aggressor_tick);
         } else {
             crosses = (best_tick >= aggressor_tick);
