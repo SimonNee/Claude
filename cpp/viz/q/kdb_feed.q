@@ -1,13 +1,10 @@
 / kdb_feed.q — Simulated exchange publisher for the orderbook visualiser
-/
 / Usage:
 /   q kdb_feed.q                        (default port 7890, rate 100ms)
 /   q kdb_feed.q -port 7891 -rate 50    (custom port and rate)
-/
 / Prerequisites:
 /   Start the C++ visualiser first: ./viz --kdb [port]
 /   The C++ process must be in listen() state before this script connects.
-/
 / What it does:
 /   Connects outbound to the C++ TCP listener on the configured port.
 /   Each timer tick sends one L2 MBP event (side, tick, qty) encoded as a
@@ -15,12 +12,10 @@
 /   Mid price follows an Ornstein-Uhlenbeck (OU) process:
 /     dP = theta*(mu - P)*dt + sigma*dW
 /   Defaults simulate ETH/USDT: mu=2000.0, sigma=10.0, tick_size=0.01.
-/
 / Wire format (little-endian, Linux x86-64):
 /   KDB+ prepends a 16-byte IPC envelope automatically when using neg[h].
 /   The C++ side reads 48 bytes total and memcpys bytes [16..47] into
 /   a ReplayEvent struct. This script sends only the 32-byte payload.
-/
 / Byte layout of the 32-byte payload (matches ReplayEvent):
 /   offset  0, 8 bytes: timestamp_ns  (uint64 LE) virtual clock nanoseconds
 /   offset  8, 4 bytes: tick          (uint32 LE) absolute price tick
@@ -118,7 +113,7 @@ SEED:42
 / --- Disconnect callback ---
 / Called by KDB+ when the remote process closes the connection.
 / Stops the timer (\t 0) and marks the session as inactive.
-.z.pc:{[h] if[h=.feed.h; .feed.running:0b; \t 0; .feed.h:0N]}
+.z.pc:{[h] if[h=.feed.h; .feed.running:0b; system "t 0"; .feed.h:0N]}
 
 / --- Startup sequence ---
 
@@ -144,4 +139,4 @@ system "S ",string SEED
 
 / Arm the timer and mark as running
 .feed.running:1b
-\t PUSH_RATE_MS
+system "t ",string PUSH_RATE_MS

@@ -90,6 +90,23 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // -----------------------------------------------------------------------
+    // KDB+ IPC handshake: send null-terminated capability string, read reply
+    // -----------------------------------------------------------------------
+    {
+        const char handshake[] = "user:pass\3";   // null-terminator from array
+        if (::send(sender_fd, handshake, sizeof(handshake), 0)
+                != static_cast<ssize_t>(sizeof(handshake))) {
+            std::fprintf(stderr, "FAIL: handshake send failed\n");
+            ::close(sender_fd); return 1;
+        }
+        char cap = '\0';
+        if (::recv(sender_fd, &cap, 1, 0) != 1) {
+            std::fprintf(stderr, "FAIL: handshake recv failed\n");
+            ::close(sender_fd); return 1;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Step 4: send 10 events as 48-byte KDB+ IPC frames
     // -----------------------------------------------------------------------
     for (uint32_t i = 0U; i < 10U; ++i) {

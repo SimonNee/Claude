@@ -200,6 +200,22 @@ void KdbEventSource::receive_loop() {
     // Store accepted fd with release ordering so stop() can observe it.
     accept_fd_.store(fd, std::memory_order_release);
 
+    // KDB+ IPC handshake: after connect, KDB+ sends a null-terminated
+    // capability string (e.g. "user:pass\3\0").  We must read until the
+    // null byte and reply with a single capability byte.  Without this,
+    // hopen() on the q side blocks forever waiting for our response.
+    {
+        char c = '\0';
+        while (true) {
+            ssize_t n = ::recv(fd, &c, 1, 0);
+            if (n <= 0) { goto cleanup; }   // disconnect before handshake
+            if (c == '\0') { break; }       // end of handshake string
+        }
+        // Reply with capability byte 3 (compression + timestamp + timespan + guid).
+        char cap = '\3';
+        if (::send(fd, &cap, 1, 0) != 1) { goto cleanup; }
+    }
+
     // Step 2: receive loop — one 48-byte IPC frame per event.
     while (!stop_flag_.load(std::memory_order_acquire)) {
         char ipc_buf[KDB_IPC_FRAME_SIZE];   // 48 bytes on the stack
@@ -217,6 +233,7 @@ void KdbEventSource::receive_loop() {
         }
     }
 
+    cleanup:
     // Step 3: cleanup — store -1 to accept_fd_ so stop() knows the fd is gone.
     int old_fd = accept_fd_.exchange(-1, std::memory_order_acq_rel);
     if (old_fd != -1) {
