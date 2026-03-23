@@ -61,6 +61,10 @@ private:
     uint32_t   fill_head_;    // index of next write slot (ring buffer head)
     uint32_t   fill_count_;   // total valid entries (capped at VIZ_TAPE_DEPTH)
 
+    // Previous best bid/ask — used to detect top-of-book movement for fill synthesis.
+    eth::book::tick_t prev_best_bid_;
+    eth::book::tick_t prev_best_ask_;
+
     std::atomic<bool> stop_flag_;
 
     // Private helpers

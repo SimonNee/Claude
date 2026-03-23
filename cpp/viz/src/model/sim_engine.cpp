@@ -39,6 +39,8 @@ SimEngine::SimEngine(IEventSource*   source,
     , prev_event_ns_(0U)
     , fill_head_(0U)
     , fill_count_(0U)
+    , prev_best_bid_(eth::book::TICK_INVALID)
+    , prev_best_ask_(eth::book::TICK_INVALID)
     , stop_flag_(false)
 {
     // Zero-initialise fill ring buffer.
@@ -138,8 +140,34 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
                                   ? eth::book::side_t::BID
                                   : eth::book::side_t::ASK;
 
-    // qty == 0 → delete the level (upsert with qty=0 per book spec).
-    return book_.upsert_by_tick(book_side, e.tick, e.qty);
+    // Initial rebase: book is constructed with NULL_BASE_TICK; upsert_by_tick
+    // returns false until the window is positioned.  On the first valid event,
+    // centre the window on the event's tick.
+    if (book_.window_base() == eth::book::NULL_BASE_TICK) {
+        uint64_t base = (static_cast<uint64_t>(e.tick) >= eth::book::WINDOW_SIZE / 2U)
+                        ? static_cast<uint64_t>(e.tick) - eth::book::WINDOW_SIZE / 2U
+                        : 0U;
+        book_.rebase(base);
+    }
+
+    bool ok = book_.upsert_by_tick(book_side, e.tick, e.qty);
+
+    // Ongoing rebase: keep the window centred as price moves.
+    if (ok && book_.needs_rebase()) {
+        eth::book::tick_t bb = book_.best_bid();
+        eth::book::tick_t ba = book_.best_ask();
+        uint64_t mid = (bb != eth::book::TICK_INVALID && ba != eth::book::TICK_INVALID)
+                       ? (static_cast<uint64_t>(bb) + static_cast<uint64_t>(ba)) / 2U
+                       : (bb != eth::book::TICK_INVALID
+                           ? static_cast<uint64_t>(bb)
+                           : static_cast<uint64_t>(ba));
+        uint64_t new_base = (mid >= eth::book::WINDOW_SIZE / 2U)
+                            ? mid - eth::book::WINDOW_SIZE / 2U
+                            : 0U;
+        book_.rebase(new_base);
+    }
+
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,26 +261,45 @@ void SimEngine::publish_snapshot() {
         snap.asks[i].qty  = 0U;
     }
 
-    // ---- Synthesised fills: crossed spread detection ----
-    if (bb != eth::book::TICK_INVALID &&
-        ba != eth::book::TICK_INVALID &&
-        bb >= ba) {
-        // Spread is crossed: synthesise a fill at mid.
-        uint32_t mid_tick = bb / 2U + ba / 2U + ((bb & 1U) & (ba & 1U));
+    // ---- Synthesised fills ----
+    // Emit a tape entry when:
+    //   (a) spread crossed (bb >= ba) — clear trade signal, or
+    //   (b) best bid changes — top level moved, likely a trade on the bid side, or
+    //   (c) best ask changes — top level moved, likely a trade on the ask side.
+    // ETH L2 MBP has no real fills; this is an approximation labelled "estimated".
+    bool bid_moved = (bb != eth::book::TICK_INVALID) && (bb != prev_best_bid_);
+    bool ask_moved = (ba != eth::book::TICK_INVALID) && (ba != prev_best_ask_);
+    bool crossed   = (bb != eth::book::TICK_INVALID) &&
+                     (ba != eth::book::TICK_INVALID) &&
+                     (bb >= ba);
+
+    if (crossed || bid_moved || ask_moved) {
+        // Use the best bid as fill price when bid moved, best ask when ask moved,
+        // mid when crossed.
+        uint32_t fill_tick;
+        if (crossed) {
+            fill_tick = bb / 2U + ba / 2U + ((bb & 1U) & (ba & 1U));
+        } else if (bid_moved && bb != eth::book::TICK_INVALID) {
+            fill_tick = bb;
+        } else {
+            fill_tick = ba;
+        }
 
         FillEntry fe{};
         fe.timestamp_ns = virtual_clock_ns_;
-        fe.price_tick   = mid_tick;
+        fe.price_tick   = fill_tick;
         fe._pad         = 0U;
         fe.qty          = 100000000ULL;   // 1 unit * 10^8
 
-        // Write into ring buffer (fill_head_ advances circularly).
         fill_ring_[fill_head_] = fe;
         fill_head_ = (fill_head_ + 1U) % VIZ_TAPE_DEPTH;
         if (fill_count_ < VIZ_TAPE_DEPTH) {
             ++fill_count_;
         }
     }
+
+    prev_best_bid_ = bb;
+    prev_best_ask_ = ba;
 
     // ---- Copy fill ring into snapshot (most-recent first) ----
     uint32_t copy_count = fill_count_;
