@@ -36,6 +36,11 @@ public:
 
     // Total events available (constant after construction).
     virtual std::size_t event_count() const = 0;
+
+    // Returns true if this source is a live (real-time) feed.
+    // Default implementation returns false.  KdbEventSource overrides to true.
+    // Used by SimEngine to skip virtual-clock pacing for live sources.
+    virtual bool is_live() const noexcept { return false; }
 };
 
 } // namespace viz::model

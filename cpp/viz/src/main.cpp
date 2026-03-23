@@ -35,6 +35,7 @@
 #include "event_source.hpp"
 #include "csv_event_source.hpp"
 #include "ou_event_source.hpp"
+#include "kdb_event_source.hpp"
 #include "replay_loader.hpp"
 #include "sim_engine.hpp"
 #include "snapshot_buffer.hpp"
@@ -61,8 +62,10 @@ static void glfw_error_callback(int error, const char* description) {
 
 int main(int argc, char* argv[]) {
     // Parse arguments
-    bool selftest = false;
-    bool use_ou   = false;
+    bool     selftest = false;
+    bool     use_ou   = false;
+    bool     use_kdb  = false;
+    uint16_t kdb_port = viz::model::KDB_DEFAULT_PORT;
     const char* csv_path = nullptr;
 
     for (int i = 1; i < argc; ++i) {
@@ -70,13 +73,22 @@ int main(int argc, char* argv[]) {
             selftest = true;
         } else if (std::strcmp(argv[i], "--ou") == 0) {
             use_ou = true;
+        } else if (std::strcmp(argv[i], "--kdb") == 0) {
+            use_kdb = true;
+        } else if (std::strcmp(argv[i], "--kdb-port") == 0 && i + 1 < argc) {
+            long p = std::strtol(argv[i + 1], nullptr, 10);
+            if (p > 0L && p <= 65535L) {
+                // Range-checked above; static_cast is the boundary conversion.
+                kdb_port = static_cast<uint16_t>(p);
+            }
+            ++i;
         } else {
             csv_path = argv[i];
         }
     }
 
     // Default: no args → use OU source
-    if (!use_ou && csv_path == nullptr) {
+    if (!use_ou && !use_kdb && csv_path == nullptr) {
         use_ou = true;
     }
 
@@ -106,7 +118,16 @@ int main(int argc, char* argv[]) {
     // Use unique_ptr for RAII; source is accessed via IEventSource*.
     std::unique_ptr<viz::model::IEventSource> source_owner;
 
-    if (use_ou) {
+    if (use_kdb) {
+        viz::model::KdbEventSourceConfig kdb_cfg;
+        kdb_cfg.port         = kdb_port;
+        kdb_cfg.drop_on_full = true;
+        auto* kdb = new viz::model::KdbEventSource(kdb_cfg);
+        // Constructor calls bind()+listen(); does NOT block.
+        // start() launches the receive thread; accept() blocks inside it.
+        kdb->start();
+        source_owner.reset(kdb);
+    } else if (use_ou) {
         source_owner = std::unique_ptr<viz::model::IEventSource>(
             new viz::model::OUEventSource(viz::model::OU_DEFAULT_PARAMS,
                                           viz::model::OU_DEFAULT_EVENT_COUNT));

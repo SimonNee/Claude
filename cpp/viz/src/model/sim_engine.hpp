@@ -65,6 +65,7 @@ private:
     eth::book::tick_t prev_best_bid_;
     eth::book::tick_t prev_best_ask_;
 
+    bool              live_source_;  // true if source is a live feed; skip sleep_for pacing
     std::atomic<bool> stop_flag_;
 
     // Private helpers

@@ -41,6 +41,7 @@ SimEngine::SimEngine(IEventSource*   source,
     , fill_count_(0U)
     , prev_best_bid_(eth::book::TICK_INVALID)
     , prev_best_ask_(eth::book::TICK_INVALID)
+    , live_source_(source->is_live())
     , stop_flag_(false)
 {
     // Zero-initialise fill ring buffer.
@@ -104,8 +105,10 @@ void SimEngine::run() {
             continue;
         }
 
-        // ---- Virtual-clock pacing ----
-        if (ev.timestamp_ns > prev_event_ns_ && prev_event_ns_ != 0U) {
+        // ---- Virtual-clock pacing (skipped for live sources) ----
+        // KDB+ live feed provides its own pacing via .z.ts timer.
+        // Applying sleep_for on top would double-pace.
+        if (!live_source_ && ev.timestamp_ns > prev_event_ns_ && prev_event_ns_ != 0U) {
             uint64_t delta_ns = ev.timestamp_ns - prev_event_ns_;
             // speed > 0 guard: speed_mult range [0.0625, 16.0] per spec.
             if (speed > 0.0f) {

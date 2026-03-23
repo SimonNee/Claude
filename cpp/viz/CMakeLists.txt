@@ -86,6 +86,7 @@ add_executable(viz
     src/model/replay_loader.cpp
     src/model/csv_event_source.cpp
     src/model/ou_event_source.cpp
+    src/model/kdb_event_source.cpp
     src/model/sim_engine.cpp
     src/view/dom_ladder.cpp
     src/view/match_tape.cpp
@@ -178,5 +179,34 @@ set_tests_properties(test_structs PROPERTIES
 )
 
 set_tests_properties(test_threading PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS"
+)
+
+# ---------------------------------------------------------------------------
+# test_kdb_source: KdbEventSource end-to-end test with simulated KDB+ sender
+#
+# No ImGui/ImPlot/book dependency.  Tests KdbEventSource in isolation.
+# Compiled with TSan to verify zero data races on the SPSC + fd atomics.
+# ---------------------------------------------------------------------------
+
+add_executable(test_kdb_source
+    test/test_kdb_source.cpp
+    src/model/kdb_event_source.cpp
+)
+
+target_include_directories(test_kdb_source PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+)
+
+target_link_libraries(test_kdb_source PRIVATE
+    pthread
+)
+
+target_compile_options(test_kdb_source PRIVATE -fsanitize=thread)
+target_link_options(test_kdb_source PRIVATE -fsanitize=thread)
+
+add_test(NAME test_kdb_source COMMAND test_kdb_source)
+
+set_tests_properties(test_kdb_source PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS"
 )
