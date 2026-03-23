@@ -78,12 +78,20 @@ target_link_libraries(third_party_imgui PUBLIC
 # ---------------------------------------------------------------------------
 # Main executable: viz
 #
-# Iteration 1: only src/main.cpp.  Later iterations add model/*.cpp and
-# view/*.cpp sources here.
+# Iteration 2: model and view .cpp sources added.
 # ---------------------------------------------------------------------------
 
 add_executable(viz
     src/main.cpp
+    src/model/replay_loader.cpp
+    src/model/csv_event_source.cpp
+    src/model/ou_event_source.cpp
+    src/model/sim_engine.cpp
+    src/view/dom_ladder.cpp
+    src/view/match_tape.cpp
+    src/view/playback_controls.cpp
+    src/view/ou_controls.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../eth/cpp/book.cpp
 )
 
 target_include_directories(viz PRIVATE
@@ -130,9 +138,45 @@ endif()
 add_test(NAME test_structs COMMAND test_structs)
 
 # ---------------------------------------------------------------------------
+# test_threading: TSan test — sim thread + render thread, run briefly
+#
+# test_threading includes .cpp files directly so it links standalone without
+# a viz library.  ETH book.cpp is also included directly.
+# ---------------------------------------------------------------------------
+
+add_executable(test_threading
+    test/test_threading.cpp
+)
+
+target_include_directories(test_threading PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/view
+    ${CMAKE_CURRENT_SOURCE_DIR}/../eth/cpp
+    ${IMGUI_DIR}
+    ${IMPLOT_DIR}
+)
+
+target_link_libraries(test_threading PRIVATE
+    third_party_imgui
+    glfw
+    OpenGL::GL
+    ${CMAKE_DL_LIBS}
+    pthread
+)
+
+target_compile_options(test_threading PRIVATE -fsanitize=thread)
+target_link_options(test_threading PRIVATE -fsanitize=thread)
+
+add_test(NAME test_threading COMMAND test_threading)
+
+# ---------------------------------------------------------------------------
 # CTest configuration
 # ---------------------------------------------------------------------------
 # Run tests from the build directory
 set_tests_properties(test_structs PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS"
+)
+
+set_tests_properties(test_threading PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS"
 )
