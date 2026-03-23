@@ -200,6 +200,9 @@ void KdbEventSource::receive_loop() {
     // Store accepted fd with release ordering so stop() can observe it.
     accept_fd_.store(fd, std::memory_order_release);
 
+    // Step 2 diagnostic: print first frame bytes to verify layout.
+    bool first_frame = true;
+
     // KDB+ IPC handshake: after connect, KDB+ sends a null-terminated
     // capability string (e.g. "user:pass\3\0").  We must read until the
     // null byte and reply with a single capability byte.  Without this,
@@ -222,6 +225,17 @@ void KdbEventSource::receive_loop() {
         int  cur_fd = accept_fd_.load(std::memory_order_relaxed);
         if (!recv_exact(cur_fd, ipc_buf, KDB_IPC_FRAME_SIZE)) {
             break;   // disconnect, error, or stop
+        }
+
+        // Diagnostic: print first frame bytes to stderr so we can verify layout.
+        if (first_frame) {
+            first_frame = false;
+            std::fprintf(stderr, "KdbEventSource: first frame bytes:");
+            for (std::size_t di = 0U; di < KDB_IPC_FRAME_SIZE; ++di) {
+                std::fprintf(stderr, " %02x",
+                    static_cast<unsigned>(static_cast<unsigned char>(ipc_buf[di])));
+            }
+            std::fprintf(stderr, "\n");
         }
 
         ReplayEvent ev{};

@@ -96,12 +96,15 @@ void SimEngine::run() {
         // ---- Fetch next event ----
         ReplayEvent ev{};
         if (!source_->next_event(ev)) {
-            // Source exhausted: set PAUSED
-            {
+            if (live_source_) {
+                // Live feed: empty queue means no event yet — not exhausted.
+                // Sleep briefly and retry; do NOT set PAUSED.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } else {
+                // Finite source exhausted: pause and wait for user action.
                 std::lock_guard<std::mutex> lk(*cmd_mutex_);
                 cmd_->state = PlaybackState::PAUSED;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
 
