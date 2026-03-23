@@ -27,14 +27,13 @@ This is a private learning repository for experimenting with Claude Code, focusi
 This project uses specialized agents (in `.claude/agents/`) to handle different aspects of development:
 
 1. **agentContext** (`agentContext.md`) - SOTA survey + affordance analysis + TRIZ contradiction analysis. Re-runnable at any point. Output goes to the user.
-2. **Architect** (`architect.md`) - High-level system design and architecture decisions
+2. **agentArchitect** (`agentArchitect.md`) - Translates agentContext + agentDuality outputs into precise implementation specifications; applies real-world design pitfalls knowledge; produces data models, interface specs, and performance contracts
 3. **agentDuality** (`agentDuality.md`) - C++ time/space trade-off analysis; run before structural changes
 4. **agentASM** (`agentASM.md`) - Inline assembly pre-flight and implementation
-5. **Class Creator** (`class-creator.md`) - Implements individual classes/modules following specifications
-6. **Code Integrator** (`code-integrator.md`) - Integrates new code into the existing codebase
-7. **Code Reviewer** (`code-reviewer.md`) - Reviews code for quality, standards, and correctness
-8. **Code Tester** (`code-tester.md`) - Writes and executes tests, reports coverage
-9. **agentQ** (`agentQ.md`) - KDB+/q specialist
+5. **agentC** (`agentC.md`) - C language specialist; enforces no-cast rule via `-Wconversion`; can run in parallel with agentCPP
+6. **agentCPP** (`agentCPP.md`) - C++ language specialist; enforces no-cast rule via type system and `-Wconversion`; can run in parallel with agentC
+7. **agentTest** (`agentTest.md`) - Expert test and benchmark specialist; knows testing pitfalls, RDTSC discipline, sanitizer discipline, circular test detection
+8. **agentQ** (`agentQ.md`) - KDB+/q specialist
 
 ### Standard Workflow
 
@@ -49,7 +48,9 @@ For significant features or changes:
 
 The user decides what agent output to act on and who to pass it to. There is no prescribed handoff chain.
 
-For simple changes, agents may be skipped as appropriate.
+**agentContext is mandatory before any new project or significant feature begins.** Do not proceed to Architect or any design work until agentContext has run. This rule exists because the frame trap is invisible from inside it — see the orderbook whitepaper, section 6.3.
+
+For simple changes (bug fixes, minor edits), other agents may be skipped as appropriate. agentContext may also be skipped if the user explicitly says so.
 
 ## Agent Knowledge Bases
 

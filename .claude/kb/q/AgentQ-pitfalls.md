@@ -28,6 +28,8 @@
 20. [Within and Range Checks](#within-and-range-checks)
 21. [Reserved Keywords as Variable Names](#reserved-keywords-as-variable-names)
 22. [Running Shell Commands from Q Scripts](#running-shell-commands-from-q-scripts)
+23. [Right-to-Left Evaluation in Arithmetic Expressions](#right-to-left-evaluation-in-arithmetic-expressions)
+24. [Seeded Scan Does Not Include the Seed](#seeded-scan-does-not-include-the-seed)
 
 ---
 
@@ -1162,6 +1164,81 @@ system "sed -i 's/old/new/g' file.csv"   ← CORRECT (idiomatic)
 
 ---
 
+## Right-to-Left Evaluation in Arithmetic Expressions
+
+Q has **no operator precedence hierarchy**. All expressions evaluate strictly right-to-left. This silently corrupts multi-term arithmetic that looks correct to a programmer from any other language.
+
+### The Trap
+
+```q
+/ WRONG — intended: x + θ(μ-x) + σy
+x+THETA*(MU-x)+SIGMA*y
+/ Evaluates as: x + (THETA * ((MU-x) + (SIGMA*y)))
+/ i.e. THETA multiplies the entire right-hand sum, not just (MU-x)
+```
+
+In this example the OU update formula produced a stationary std of 0.06 instead of 12.50 — a 200× error with no warning or error message.
+
+### The Fix
+
+Parenthesise every term explicitly:
+
+```q
+/ CORRECT
+x+(THETA*(MU-x))+(SIGMA*y)
+```
+
+### Detection Rule
+
+Any arithmetic expression with more than one operator must be parenthesised explicitly. Do not rely on precedence. When porting a formula from mathematics or another language, parenthesise every sub-expression individually before translating to q.
+
+### Real Incident
+
+OU process for E-mini price generation, 2026-03-21. The formula `x+THETA*(MU-x)+SIGMA*y` evaluated as `x+(THETA*((MU-x)+(SIGMA*y)))`, collapsing the volatility term into the drift and producing a near-constant price series.
+
+---
+
+## Seeded Scan Does Not Include the Seed
+
+The seeded scan `seed f\ vec` applies `f` to each element of `vec`, threading the result. It returns **exactly `count[vec]` elements** — the seed is not prepended to the output.
+
+### The Trap
+
+```q
+seed: MU
+normals: 1000?1.0
+path: seed {x+(THETA*(MU-x))+(SIGMA*y)}\ normals
+/ count[path] = 1000 — seed is NOT in path
+/ path[0] is f(seed, normals[0]), not seed itself
+
+/ If you then do:
+prices: snap path  / 1000 elements
+addPrices: prices where mask  / mask has 1001 elements → length error or silent mismatch
+```
+
+The bug is silent when the length mismatch is absorbed by a subsequent operation — it drops one element without warning.
+
+### The Fix
+
+If you need the seed in the output, prepend it explicitly:
+
+```q
+path: seed, seed {x+(THETA*(MU-x))+(SIGMA*y)}\ normals
+/ count[path] = 1001 — seed is now path[0]
+```
+
+Or size all downstream vectors to `count[normals]`, not `count[normals]+1`.
+
+### Detection Rule
+
+After any seeded scan, immediately verify `count[result] = count[input]`. If downstream vectors are sized differently, a length mismatch will occur — sometimes silently.
+
+### Real Incident
+
+E-mini order stream generation, 2026-03-21. A `1_` drop was used to compensate for an assumed seed prepend that does not happen, silently discarding one mid-price and creating a length mismatch at the `addPrices` assignment.
+
+---
+
 ## Before Writing Q Code
 
 1. **Consult the phrasebook** for the relevant section (arith, find, test, etc.)
@@ -1204,4 +1281,4 @@ This document is a living reference. Update it as you discover new pitfalls.
 
 ---
 
-Last Updated: 2026-03-21
+Last Updated: 2026-03-21 (added pitfalls 23, 24 from E-mini data generation)

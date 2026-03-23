@@ -113,3 +113,30 @@ cpp/orderbook/data/orders.csv
 cpp/orderbook/main
 cpp/orderbook/tests
 cpp/orderbook/bench
+
+# Emini orderbook — hand-written Makefiles (exempt from cmake Makefile rule)
+!cpp/emini/c/Makefile
+!cpp/emini/cpp/Makefile
+
+# Emini orderbook — test and bench binaries
+cpp/emini/c/test_book
+cpp/emini/c/bench_book
+cpp/emini/cpp/test_book_cpp
+cpp/emini/cpp/bench_book_cpp
+cpp/emini/cpp/test_book_run
+
+# Emini orderbook — generated data (regenerate with: q cpp/emini/data/generate.q)
+cpp/emini/data/orders.csv
+cpp/emini/data/orders_cancel_heavy.csv
+cpp/emini/data/orders_monotonic.csv
+cpp/eth/cpp/test_book_cpp
+cpp/eth/cpp/bench_book_cpp
+cpp/eth/data/events.csv
+cpp/eth/data/events_volatile.csv
+cpp/eth/data/events_trending.csv
+cpp/eth/cpp/test_book_cpp
+cpp/eth/cpp/bench_book_cpp
+cpp/eth/data/events.csv
+cpp/eth/data/events_volatile.csv
+cpp/eth/data/events_trending.csv
+cpp/emini/cpp/*.s
