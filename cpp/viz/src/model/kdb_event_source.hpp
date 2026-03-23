@@ -36,8 +36,15 @@ namespace viz::model {
 
 static constexpr uint16_t    KDB_DEFAULT_PORT       = 7890U;
 static constexpr uint32_t    KDB_QUEUE_CAPACITY      = 4096U;
-static constexpr std::size_t KDB_IPC_FRAME_SIZE      = 48U;
-static constexpr std::size_t KDB_IPC_PAYLOAD_OFFSET  = 16U;
+// KDB+ IPC frame for neg[h] sending a 32-byte byte vector:
+//   [0-7]:   8-byte header (endian/msg-type/compress/reserved + total_len LE)
+//   [8]:     type = 0x04 (byte vector)
+//   [9]:     attributes = 0x00
+//   [10-13]: count = 32 (LE uint32)
+//   [14-45]: 32-byte payload (ReplayEvent)
+// Total = 46 bytes; payload at offset 14.
+static constexpr std::size_t KDB_IPC_FRAME_SIZE      = 46U;
+static constexpr std::size_t KDB_IPC_PAYLOAD_OFFSET  = 14U;
 
 // ---------------------------------------------------------------------------
 // KdbEventSourceConfig

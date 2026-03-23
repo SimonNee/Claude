@@ -35,14 +35,19 @@
 static constexpr uint16_t TEST_PORT = 17890U;
 
 // ---------------------------------------------------------------------------
-// 16-byte KDB+ IPC envelope for a 32-byte byte vector (little-endian, async,
-// uncompressed).  Fixed format — see spec Data Model / KDB+ IPC Frame Layout.
+// 14-byte KDB+ IPC envelope for a 32-byte byte vector (little-endian, async,
+// uncompressed).  Matches actual neg[h] wire format:
+//   [0-7]:   header (endian=1, async=0, uncompressed=0, reserved=0, total_len=46 LE)
+//   [8]:     type = 0x04 (byte vector)
+//   [9]:     attributes = 0x00
+//   [10-13]: count = 32 (0x20 LE)
+//   [14-45]: 32-byte payload (ReplayEvent)
 // ---------------------------------------------------------------------------
-static const uint8_t KDB_ENVELOPE[16] = {
+static const uint8_t KDB_ENVELOPE[14] = {
     0x01U, 0x00U, 0x00U, 0x00U,   // bytes  0-3:  LE magic, async, uncompressed, reserved
-    0x30U, 0x00U, 0x00U, 0x00U,   // bytes  4-7:  total message length = 48 (0x30) LE
-    0x04U, 0x00U, 0x00U, 0x00U,   // bytes  8-11: type=4 (byte vector), attr=0
-    0x20U, 0x00U, 0x00U, 0x00U    // bytes 12-15: count = 32 (0x20) LE
+    0x2EU, 0x00U, 0x00U, 0x00U,   // bytes  4-7:  total message length = 46 (0x2E) LE
+    0x04U, 0x00U,                 // bytes  8-9:  type=4 (byte vector), attr=0
+    0x20U, 0x00U, 0x00U, 0x00U    // bytes 10-13: count = 32 (0x20) LE
 };
 
 int main() {
@@ -118,13 +123,13 @@ int main() {
         ev.side         = static_cast<uint8_t>(i % 2U);
         // _pad2 zero-initialised by ev{}
 
-        char frame[48];
-        std::memcpy(frame,       KDB_ENVELOPE, 16);
-        std::memcpy(frame + 16,  &ev,          32);
+        char frame[46];
+        std::memcpy(frame,       KDB_ENVELOPE, 14);
+        std::memcpy(frame + 14,  &ev,          32);
 
-        ssize_t sent = ::send(sender_fd, frame, 48, 0);
-        if (sent != 48) {
-            std::fprintf(stderr, "FAIL: send() returned %zd (expected 48)\n", sent);
+        ssize_t sent = ::send(sender_fd, frame, 46, 0);
+        if (sent != 46) {
+            std::fprintf(stderr, "FAIL: send() returned %zd (expected 46)\n", sent);
             ::close(sender_fd);
             return 1;
         }
