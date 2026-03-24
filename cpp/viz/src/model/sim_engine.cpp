@@ -291,11 +291,24 @@ void SimEngine::publish_snapshot() {
             fill_tick = ba;
         }
 
+        // Determine fill qty from the book level that triggered the fill.
+        eth::book::qty_t fill_qty;
+        if (crossed) {
+            eth::book::qty_t bq = book_.level_qty(eth::book::side_t::BID, bb);
+            eth::book::qty_t aq = book_.level_qty(eth::book::side_t::ASK, ba);
+            fill_qty = (bq < aq) ? bq : aq;
+        } else if (bid_moved) {
+            fill_qty = book_.level_qty(eth::book::side_t::BID, bb);
+        } else {
+            fill_qty = book_.level_qty(eth::book::side_t::ASK, ba);
+        }
+        if (fill_qty == 0U) { fill_qty = 100000000ULL; }  // fallback: 1 unit
+
         FillEntry fe{};
         fe.timestamp_ns = virtual_clock_ns_;
         fe.price_tick   = fill_tick;
         fe._pad         = 0U;
-        fe.qty          = 100000000ULL;   // 1 unit * 10^8
+        fe.qty          = fill_qty;
 
         fill_ring_[fill_head_] = fe;
         fill_head_ = (fill_head_ + 1U) % VIZ_TAPE_DEPTH;

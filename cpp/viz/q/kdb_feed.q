@@ -7,10 +7,11 @@
 /   The C++ process must be in listen() state before this script connects.
 / What it does:
 /   Connects outbound to the C++ TCP listener on the configured port.
-/   Each timer tick sends two L2 MBP events: one BID (mid - half_spread)
-/   and one ASK (mid + half_spread). When the mid moves, stale levels are
-/   explicitly deleted (qty=0) before the new levels are upserted.
-/   This keeps the book with exactly one bid and one ask level, never crossed.
+/   Each timer tick sends one L2 MBP event (random side, random qty).
+/   BID events land at mid_tick - 1 - rand(0..DEPTH-1): strictly below mid.
+/   ASK events land at mid_tick + 1 + rand(0..DEPTH-1): strictly above mid.
+/   Qtys are independently random per event so fills on the tape vary.
+/   Book depth builds naturally over time; no explicit deletes needed.
 /   Mid price follows an Ornstein-Uhlenbeck (OU) process:
 /     dP = theta*(mu - P)*dt + sigma*dW
 /   Defaults simulate ETH/USDT: mu=2000.0, sigma=10.0, tick_size=0.01.
@@ -31,25 +32,21 @@ PORT:7890
 PUSH_RATE_MS:100
 MU:2000.0
 THETA:0.005
-SIGMA:10.0
+SIGMA:0.05      / ~5 ticks/step std dev; keeps mid within DEPTH window each step
 TICK_SIZE:0.01
 TICKS_PER_DOLLAR:100
 BASE_PRICE:0.0
-HALF_SPREAD:5       / half-spread in ticks (5 ticks = $0.05; full spread = $0.10)
+DEPTH:10            / spread of price levels around mid (1..DEPTH ticks from mid)
 MAX_TICK:300000
 SEED:42
 
 / --- State ---
-/ .feed.mid           current mid price (initialised to MU at startup)
-/ .feed.vclock        virtual clock nanoseconds (monotonically increasing)
-/ .feed.h             connection handle to C++ listener (null until connected)
-/ .feed.running       flag: 1b while active, set to 0b on disconnect
-/ .feed.prev_bid_tick last published bid tick (0N until first push)
-/ .feed.prev_ask_tick last published ask tick (0N until first push)
+/ .feed.mid    current mid price (initialised to MU at startup)
+/ .feed.vclock virtual clock nanoseconds (monotonically increasing)
+/ .feed.h      connection handle to C++ listener (null until connected)
+/ .feed.running flag: 1b while active, set to 0b on disconnect
 .feed.h:0N
 .feed.running:0b
-.feed.prev_bid_tick:0N
-.feed.prev_ask_tick:0N
 
 / --- Box-Muller normal random variable ---
 / Returns one standard-normal float.
@@ -63,8 +60,8 @@ SEED:42
 / --- Build a 32-byte ReplayEvent byte vector ---
 / Arguments:
 /   side  long  0=BID 1=ASK
-/   tick  long  absolute price tick (1..MAX_TICK)
-/   qty   long  scaled quantity x 10^8; 0 = delete this level
+/   tick  long  absolute price tick
+/   qty   long  scaled quantity x 10^8
 / Returns a 32-element byte vector matching the ReplayEvent wire layout.
 / Encoding: 0x0 vs x produces big-endian bytes; reverse gives little-endian.
 / Verification: count .feed.makeEvent[0;200000;100000000] must equal 32.
@@ -79,14 +76,12 @@ SEED:42
     ts_bytes,tick_bytes,pad_bytes,qty_bytes,side_byte,pad2_bytes
  }
 
-/ --- Generate one OU step and push bid+ask events to C++ ---
+/ --- Generate one OU step and push one event to C++ ---
 / Called each timer tick while .feed.running is 1b.
 / OU update: P(t+dt) = P(t) + theta*(mu - P(t)) + sigma*N(0,1)
-/ Each step:
-/   1. Delete the stale bid/ask level (qty=0) if the tick has changed.
-/   2. Upsert the new bid at (mid_tick - HALF_SPREAD).
-/   3. Upsert the new ask at (mid_tick + HALF_SPREAD).
-/ This keeps exactly one bid level and one ask level in the book, never crossed.
+/ BID: placed at mid_tick - 1 - rand(0..DEPTH-1)  — strictly below mid.
+/ ASK: placed at mid_tick + 1 + rand(0..DEPTH-1)  — strictly above mid.
+/ Qty is independently random per event: 1..9 lots scaled by 10^8.
 .feed.push:{[]
     / Advance virtual clock by one interval (nanoseconds)
     .feed.vclock+:PUSH_RATE_MS * 1000000j;
@@ -102,36 +97,22 @@ SEED:42
     max_price:BASE_PRICE + MAX_TICK * TICK_SIZE;
     .feed.mid:min_price | max_price & .feed.mid;
 
-    / Convert mid price to integer tick; derive bid/ask ticks
+    / Convert mid price to integer tick
     mid_tick:`long$floor (.feed.mid - BASE_PRICE) * TICKS_PER_DOLLAR + 0.5;
     mid_tick:1 | MAX_TICK & mid_tick;
-    bid_tick:1 | mid_tick - HALF_SPREAD;
-    ask_tick:MAX_TICK & mid_tick + HALF_SPREAD;
 
-    / Delete stale bid level if the tick has moved
-    if[not null .feed.prev_bid_tick;
-        if[.feed.prev_bid_tick <> bid_tick;
-            neg[.feed.h] .feed.makeEvent[0; .feed.prev_bid_tick; 0]
-        ]
-    ];
+    / Random side
+    side:`long$0.5 < rand 1.0;
 
-    / Delete stale ask level if the tick has moved
-    if[not null .feed.prev_ask_tick;
-        if[.feed.prev_ask_tick <> ask_tick;
-            neg[.feed.h] .feed.makeEvent[1; .feed.prev_ask_tick; 0]
-        ]
-    ];
+    / Tick: BID strictly below mid, ASK strictly above mid
+    offset:`long$DEPTH * rand 1.0;   / 0..DEPTH-1
+    tick:$[side=0; 1 | mid_tick - 1 - offset; MAX_TICK & mid_tick + 1 + offset];
 
-    / Random quantity 1..9 lots (scaled by 10^8)
+    / Independent random quantity: 1..9 lots scaled by 10^8
     qty:`long$1e8 * 1 + `long$9 * rand 1.0;
 
-    / Upsert new bid and ask levels
-    neg[.feed.h] .feed.makeEvent[0; bid_tick; qty];
-    neg[.feed.h] .feed.makeEvent[1; ask_tick; qty];
-
-    / Track ticks for next step
-    .feed.prev_bid_tick:bid_tick;
-    .feed.prev_ask_tick:ask_tick;
+    / Encode and push
+    neg[.feed.h] .feed.makeEvent[side;tick;qty];
  }
 
 / --- Timer callback ---
