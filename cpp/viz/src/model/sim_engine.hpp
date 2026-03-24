@@ -65,7 +65,7 @@ private:
     std::atomic<bool> stop_flag_;
 
     // Private helpers
-    bool dispatch_event(const ReplayEvent& e);
+    void dispatch_event(const ReplayEvent& e);
     void publish_snapshot();
     void record_fill(uint32_t tick, uint64_t qty);
 };

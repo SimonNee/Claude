@@ -166,7 +166,7 @@ void SimEngine::record_fill(uint32_t tick, uint64_t qty) {
 // This keeps the book self-cleaning: levels that cross the opposite side
 // are matched and removed; the book is never left in a crossed state.
 
-bool SimEngine::dispatch_event(const ReplayEvent& e) {
+void SimEngine::dispatch_event(const ReplayEvent& e) {
     eth::book::side_t book_side = (e.side == 0U)
                                   ? eth::book::side_t::BID
                                   : eth::book::side_t::ASK;
@@ -187,18 +187,18 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
             eth::book::tick_t ba = book_.best_ask();
             if (ba == eth::book::TICK_INVALID || ba > e.tick) { break; }
             eth::book::qty_t aq = book_.level_qty(eth::book::side_t::ASK, ba);
+            if (aq == 0U) { break; }   // defensive: best_ask invariant should hold, but guard infinite-loop
             uint64_t fill_qty = (remaining < aq) ? remaining : aq;
             record_fill(ba, fill_qty);
-            static_cast<void>(
-                book_.upsert_by_tick(eth::book::side_t::ASK, ba,
-                                     static_cast<eth::book::qty_t>(aq - fill_qty)));
+            static_cast<void>(book_.upsert_by_tick(eth::book::side_t::ASK, ba, aq - fill_qty));
             remaining -= fill_qty;
         }
         // Rest any unfilled quantity as a passive bid.
         if (remaining > 0U) {
-            static_cast<void>(
-                book_.upsert_by_tick(eth::book::side_t::BID, e.tick,
-                                     static_cast<eth::book::qty_t>(remaining)));
+            if (!book_.upsert_by_tick(eth::book::side_t::BID, e.tick, remaining)) {
+                std::fprintf(stderr, "SimEngine: bid tick %u out of window — remainder lost\n",
+                             e.tick);
+            }
         }
     } else {
         // Aggressive ASK: match against bid levels at or above e.tick.
@@ -206,18 +206,18 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
             eth::book::tick_t bb = book_.best_bid();
             if (bb == eth::book::TICK_INVALID || bb < e.tick) { break; }
             eth::book::qty_t bq = book_.level_qty(eth::book::side_t::BID, bb);
+            if (bq == 0U) { break; }   // defensive: best_bid invariant should hold, but guard infinite-loop
             uint64_t fill_qty = (remaining < bq) ? remaining : bq;
             record_fill(bb, fill_qty);
-            static_cast<void>(
-                book_.upsert_by_tick(eth::book::side_t::BID, bb,
-                                     static_cast<eth::book::qty_t>(bq - fill_qty)));
+            static_cast<void>(book_.upsert_by_tick(eth::book::side_t::BID, bb, bq - fill_qty));
             remaining -= fill_qty;
         }
         // Rest any unfilled quantity as a passive ask.
         if (remaining > 0U) {
-            static_cast<void>(
-                book_.upsert_by_tick(eth::book::side_t::ASK, e.tick,
-                                     static_cast<eth::book::qty_t>(remaining)));
+            if (!book_.upsert_by_tick(eth::book::side_t::ASK, e.tick, remaining)) {
+                std::fprintf(stderr, "SimEngine: ask tick %u out of window — remainder lost\n",
+                             e.tick);
+            }
         }
     }
 
@@ -235,8 +235,6 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
                             : 0U;
         book_.rebase(new_base);
     }
-
-    return true;
 }
 
 // ---------------------------------------------------------------------------
