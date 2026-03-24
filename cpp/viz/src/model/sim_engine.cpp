@@ -39,8 +39,6 @@ SimEngine::SimEngine(IEventSource*   source,
     , prev_event_ns_(0U)
     , fill_head_(0U)
     , fill_count_(0U)
-    , prev_best_bid_(eth::book::TICK_INVALID)
-    , prev_best_ask_(eth::book::TICK_INVALID)
     , live_source_(source->is_live())
     , stop_flag_(false)
 {
@@ -137,18 +135,43 @@ void SimEngine::run() {
 }
 
 // ---------------------------------------------------------------------------
-// dispatch_event — convert ReplayEvent into a book upsert/delete
+// record_fill — append one fill to the ring buffer
 // ---------------------------------------------------------------------------
 
+void SimEngine::record_fill(uint32_t tick, uint64_t qty) {
+    FillEntry fe{};
+    fe.timestamp_ns = virtual_clock_ns_;
+    fe.price_tick   = tick;
+    fe._pad         = 0U;
+    fe.qty          = qty;
+    fill_ring_[fill_head_] = fe;
+    fill_head_ = (fill_head_ + 1U) % VIZ_TAPE_DEPTH;
+    if (fill_count_ < VIZ_TAPE_DEPTH) {
+        ++fill_count_;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// dispatch_event — match aggressive orders, rest passive remainder
+// ---------------------------------------------------------------------------
+//
+// An incoming BID at tick T is aggressive if T >= best_ask.
+//   Walk up ask levels from best_ask while ask_tick <= T, filling at the
+//   ask price (resting side) until qty is exhausted.  Rest any remainder.
+//
+// An incoming ASK at tick T is aggressive if T <= best_bid.
+//   Walk down bid levels from best_bid while bid_tick >= T, filling at the
+//   bid price (resting side) until qty is exhausted.  Rest any remainder.
+//
+// This keeps the book self-cleaning: levels that cross the opposite side
+// are matched and removed; the book is never left in a crossed state.
+
 bool SimEngine::dispatch_event(const ReplayEvent& e) {
-    // Convert uint8_t side to eth::book::side_t — single conversion site.
     eth::book::side_t book_side = (e.side == 0U)
                                   ? eth::book::side_t::BID
                                   : eth::book::side_t::ASK;
 
-    // Initial rebase: book is constructed with NULL_BASE_TICK; upsert_by_tick
-    // returns false until the window is positioned.  On the first valid event,
-    // centre the window on the event's tick.
+    // Initial rebase: centre window on first event.
     if (book_.window_base() == eth::book::NULL_BASE_TICK) {
         uint64_t base = (static_cast<uint64_t>(e.tick) >= eth::book::WINDOW_SIZE / 2U)
                         ? static_cast<uint64_t>(e.tick) - eth::book::WINDOW_SIZE / 2U
@@ -156,10 +179,50 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
         book_.rebase(base);
     }
 
-    bool ok = book_.upsert_by_tick(book_side, e.tick, e.qty);
+    uint64_t remaining = e.qty;
+
+    if (book_side == eth::book::side_t::BID) {
+        // Aggressive BID: match against ask levels at or below e.tick.
+        while (remaining > 0U) {
+            eth::book::tick_t ba = book_.best_ask();
+            if (ba == eth::book::TICK_INVALID || ba > e.tick) { break; }
+            eth::book::qty_t aq = book_.level_qty(eth::book::side_t::ASK, ba);
+            uint64_t fill_qty = (remaining < aq) ? remaining : aq;
+            record_fill(ba, fill_qty);
+            static_cast<void>(
+                book_.upsert_by_tick(eth::book::side_t::ASK, ba,
+                                     static_cast<eth::book::qty_t>(aq - fill_qty)));
+            remaining -= fill_qty;
+        }
+        // Rest any unfilled quantity as a passive bid.
+        if (remaining > 0U) {
+            static_cast<void>(
+                book_.upsert_by_tick(eth::book::side_t::BID, e.tick,
+                                     static_cast<eth::book::qty_t>(remaining)));
+        }
+    } else {
+        // Aggressive ASK: match against bid levels at or above e.tick.
+        while (remaining > 0U) {
+            eth::book::tick_t bb = book_.best_bid();
+            if (bb == eth::book::TICK_INVALID || bb < e.tick) { break; }
+            eth::book::qty_t bq = book_.level_qty(eth::book::side_t::BID, bb);
+            uint64_t fill_qty = (remaining < bq) ? remaining : bq;
+            record_fill(bb, fill_qty);
+            static_cast<void>(
+                book_.upsert_by_tick(eth::book::side_t::BID, bb,
+                                     static_cast<eth::book::qty_t>(bq - fill_qty)));
+            remaining -= fill_qty;
+        }
+        // Rest any unfilled quantity as a passive ask.
+        if (remaining > 0U) {
+            static_cast<void>(
+                book_.upsert_by_tick(eth::book::side_t::ASK, e.tick,
+                                     static_cast<eth::book::qty_t>(remaining)));
+        }
+    }
 
     // Ongoing rebase: keep the window centred as price moves.
-    if (ok && book_.needs_rebase()) {
+    if (book_.needs_rebase()) {
         eth::book::tick_t bb = book_.best_bid();
         eth::book::tick_t ba = book_.best_ask();
         uint64_t mid = (bb != eth::book::TICK_INVALID && ba != eth::book::TICK_INVALID)
@@ -173,7 +236,7 @@ bool SimEngine::dispatch_event(const ReplayEvent& e) {
         book_.rebase(new_base);
     }
 
-    return ok;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,59 +329,6 @@ void SimEngine::publish_snapshot() {
         snap.asks[i]._pad = 0U;
         snap.asks[i].qty  = 0U;
     }
-
-    // ---- Synthesised fills ----
-    // Emit a tape entry when:
-    //   (a) spread crossed (bb >= ba) — clear trade signal, or
-    //   (b) best bid changes — top level moved, likely a trade on the bid side, or
-    //   (c) best ask changes — top level moved, likely a trade on the ask side.
-    // ETH L2 MBP has no real fills; this is an approximation labelled "estimated".
-    bool bid_moved = (bb != eth::book::TICK_INVALID) && (bb != prev_best_bid_);
-    bool ask_moved = (ba != eth::book::TICK_INVALID) && (ba != prev_best_ask_);
-    bool crossed   = (bb != eth::book::TICK_INVALID) &&
-                     (ba != eth::book::TICK_INVALID) &&
-                     (bb >= ba);
-
-    if (crossed || bid_moved || ask_moved) {
-        // Use the best bid as fill price when bid moved, best ask when ask moved,
-        // mid when crossed.
-        uint32_t fill_tick;
-        if (crossed) {
-            fill_tick = bb / 2U + ba / 2U + ((bb & 1U) & (ba & 1U));
-        } else if (bid_moved && bb != eth::book::TICK_INVALID) {
-            fill_tick = bb;
-        } else {
-            fill_tick = ba;
-        }
-
-        // Determine fill qty from the book level that triggered the fill.
-        eth::book::qty_t fill_qty;
-        if (crossed) {
-            eth::book::qty_t bq = book_.level_qty(eth::book::side_t::BID, bb);
-            eth::book::qty_t aq = book_.level_qty(eth::book::side_t::ASK, ba);
-            fill_qty = (bq < aq) ? bq : aq;
-        } else if (bid_moved) {
-            fill_qty = book_.level_qty(eth::book::side_t::BID, bb);
-        } else {
-            fill_qty = book_.level_qty(eth::book::side_t::ASK, ba);
-        }
-        if (fill_qty == 0U) { fill_qty = 100000000ULL; }  // fallback: 1 unit
-
-        FillEntry fe{};
-        fe.timestamp_ns = virtual_clock_ns_;
-        fe.price_tick   = fill_tick;
-        fe._pad         = 0U;
-        fe.qty          = fill_qty;
-
-        fill_ring_[fill_head_] = fe;
-        fill_head_ = (fill_head_ + 1U) % VIZ_TAPE_DEPTH;
-        if (fill_count_ < VIZ_TAPE_DEPTH) {
-            ++fill_count_;
-        }
-    }
-
-    prev_best_bid_ = bb;
-    prev_best_ask_ = ba;
 
     // ---- Copy fill ring into snapshot (most-recent first) ----
     uint32_t copy_count = fill_count_;
