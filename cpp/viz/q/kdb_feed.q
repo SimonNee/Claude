@@ -41,12 +41,14 @@ MAX_TICK:300000
 SEED:42
 
 / --- State ---
-/ .feed.mid    current mid price (initialised to MU at startup)
-/ .feed.vclock virtual clock nanoseconds (monotonically increasing)
-/ .feed.h      connection handle to C++ listener (null until connected)
-/ .feed.running flag: 1b while active, set to 0b on disconnect
+/ .feed.mid          current mid price (initialised to MU at startup)
+/ .feed.vclock       virtual clock nanoseconds (monotonically increasing)
+/ .feed.h            connection handle to C++ listener (null until connected)
+/ .feed.running      flag: 1b while active, set to 0b on disconnect
+/ .feed.prev_mid_tick last published mid tick (0N until first push)
 .feed.h:0N
 .feed.running:0b
+.feed.prev_mid_tick:0N
 
 / --- Box-Muller normal random variable ---
 / Returns one standard-normal float.
@@ -101,6 +103,22 @@ SEED:42
     mid_tick:`long$floor (.feed.mid - BASE_PRICE) * TICKS_PER_DOLLAR + 0.5;
     mid_tick:1 | MAX_TICK & mid_tick;
 
+    / Clean up levels that crossed the new mid due to drift.
+    / Mid moved down: delete bid ticks in [mid_tick .. prev_mid-1] (now at/above mid).
+    / Mid moved up:   delete ask ticks in [prev_mid+1 .. mid_tick] (now at/below mid).
+    if[not null .feed.prev_mid_tick;
+        delta:`long$mid_tick - .feed.prev_mid_tick;
+        if[delta < 0;
+            stale:mid_tick + til neg delta;
+            {neg[.feed.h] .feed.makeEvent[0; x; 0]} each stale
+        ];
+        if[delta > 0;
+            stale:(.feed.prev_mid_tick + 1) + til delta;
+            {neg[.feed.h] .feed.makeEvent[1; x; 0]} each stale
+        ]
+    ];
+    .feed.prev_mid_tick:mid_tick;
+
     / Random side
     side:`long$0.5 < rand 1.0;
 
@@ -139,6 +157,7 @@ system "S ",string SEED
 .feed.mid:MU
 .feed.vclock:0j
 .feed.running:0b
+.feed.prev_mid_tick:0N
 
 / Connect outbound to the C++ listener
 / hopen blocks until the TCP handshake completes.
