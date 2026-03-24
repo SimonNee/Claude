@@ -33,7 +33,7 @@ SIGMA:10.0
 TICK_SIZE:0.01
 TICKS_PER_DOLLAR:100
 BASE_PRICE:0.0
-MAX_TICK:65535
+MAX_TICK:300000
 SEED:42
 
 / --- State ---
@@ -61,6 +61,7 @@ SEED:42
 / Returns a 32-element byte vector matching the ReplayEvent wire layout.
 / Encoding: 0x0 vs x produces big-endian bytes; reverse gives little-endian.
 / Verification: count .feed.makeEvent[0;200000;100000000] must equal 32.
+/ Note: tick 200000 is valid — ReplayEvent.tick is uint32, C++ book auto-rebases.
 .feed.makeEvent:{[side;tick;qty]
     ts_bytes  : reverse 0x0 vs `long$.feed.vclock;     / 8 bytes LE  offset  0
     tick_bytes: reverse 0x0 vs `int$tick;              / 4 bytes LE  offset  8

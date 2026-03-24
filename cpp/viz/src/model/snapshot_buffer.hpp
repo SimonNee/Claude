@@ -76,7 +76,8 @@ struct SnapshotBuffer {
 
     // Not copyable or movable.
     SnapshotBuffer()
-        : published_idx(2U)   // buffers[2] initially published (zero-init, valid)
+        : buffers{}           // zero-init all three BookSnapshots (qty=0, tick=0)
+        , published_idx(2U)   // buffers[2] initially published
         , generation(0U)
         , scratch_idx(0U)     // sim writes to buffers[0] first
     {}
