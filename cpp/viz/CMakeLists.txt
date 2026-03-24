@@ -210,3 +210,36 @@ add_test(NAME test_kdb_source COMMAND test_kdb_source)
 set_tests_properties(test_kdb_source PROPERTIES
     PASS_REGULAR_EXPRESSION "PASS"
 )
+
+# ---------------------------------------------------------------------------
+# test_matching: SimEngine price-time priority matching correctness
+#
+# Feeds deterministic event sequences and verifies fill tape and book state.
+# No TSan — correctness test only.
+# ---------------------------------------------------------------------------
+
+add_executable(test_matching
+    test/test_matching.cpp
+)
+
+target_include_directories(test_matching PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/view
+    ${CMAKE_CURRENT_SOURCE_DIR}/../eth/cpp
+    ${IMGUI_DIR}
+    ${IMPLOT_DIR}
+)
+
+target_link_libraries(test_matching PRIVATE
+    third_party_imgui
+    glfw
+    OpenGL::GL
+    ${CMAKE_DL_LIBS}
+    pthread
+)
+
+add_test(NAME test_matching COMMAND test_matching)
+
+set_tests_properties(test_matching PROPERTIES
+    PASS_REGULAR_EXPRESSION "PASS"
+)
